@@ -355,6 +355,9 @@ async def ask_ai(request: AskAIRequest):
 async def generate_quiz(request: GenerateQuizRequest):
     try:
         return await question_service.generate_quiz(request)
+    except ValueError as e:
+        logger.warning(f"Quiz generation rejected: {e}")
+        raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         logger.error(f"Quiz generation failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))

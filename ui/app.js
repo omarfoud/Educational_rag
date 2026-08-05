@@ -399,6 +399,7 @@ function setupUpload() {
 
             // Auto-fill File ID in other tabs for convenience
             document.getElementById('qa-file-id').value = result.fileId;
+            document.getElementById('quiz-file-id').value = result.fileId;
             document.getElementById('summary-file-id').value = result.fileId;
             document.getElementById('transcript-file-id').value = result.fileId;
             if (document.getElementById('ast-file-id')) document.getElementById('ast-file-id').value = result.fileId;
@@ -878,9 +879,11 @@ function setupQuiz() {
             subject: document.getElementById('quiz-subject').value,
             chapter: document.getElementById('quiz-chapter').value,
             difficulty: document.getElementById('quiz-difficulty').value,
-            numberOfQuestions: parseInt(document.getElementById('quiz-count').value)
+            numberOfQuestions: parseInt(document.getElementById('quiz-count').value),
+            fileId: document.getElementById('quiz-file-id').value.trim(),
+            prompt: document.getElementById('quiz-prompt').value.trim()
         };
-        payload.language = inferOutputLanguage(payload.subject, payload.chapter);
+        payload.language = inferOutputLanguage(payload.subject, payload.chapter, payload.prompt);
         console.log('/api/generate-quiz payload', payload);
 
         try {

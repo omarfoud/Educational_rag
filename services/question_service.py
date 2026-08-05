@@ -520,6 +520,13 @@ Return JSON with: question, explanation, examples[]. Use {'Arabic' if is_ar else
         return AskAIResponse(question=raw.get("question", request.question), explanation=raw.get("explanation", ""), examples=raw.get("examples", []) or [])
 
     async def generate_quiz(self, request: GenerateQuizRequest) -> List[QuizQuestion]:
+        context = await self._get_quiz_context(request)
+        if not context:
+            raise ValueError(
+                "No embedded teacher content found for this quiz request. "
+                "Process the lesson/video into embeddings first, then generate the quiz."
+            )
+
         is_ar = self._is_arabic_from_request_language(request.language)
         if is_ar is None:
             is_ar = self._should_generate_arabic_from_material(
@@ -530,6 +537,7 @@ Return JSON with: question, explanation, examples[]. Use {'Arabic' if is_ar else
                 request.lesson,
                 request.title,
                 request.description,
+                request.prompt,
             )
         language = self._language_name(is_ar)
         prompt = f"""Generate {request.numberOfQuestions} MCQ quiz questions.
@@ -540,17 +548,22 @@ Chapter: {request.chapter or ''}
 Lesson: {request.lesson or ''}
 Title: {request.title or ''}
 Description: {request.description or ''}
+File ID: {request.fileId or ''}
+Focus / Teacher instructions: {request.prompt or ''}
 Grade/Level: {request.grade or ''}
 Difficulty: {request.difficulty.value}
 Use {language}.
 {self._language_requirements(language)}
+Use only the provided teacher lesson context from retrieved embeddings as the source of truth.
+Prioritize the focus/instructions when selecting concepts, but only if the provided context supports them.
+Do not invent quiz questions from general knowledge when the context does not support them.
 Each question must have 4 options and exactly one correct option.
 Return JSON array only."""
         schema = {"type":"array","items":{"question":"string","options":[{"text":"string","isCorrect":"boolean"}],"explanation":"string","type":"mcq"}}
-        system_instruction = f"You generate MCQ quizzes in {language}. Return JSON only."
+        system_instruction = f"You generate MCQ quizzes in {language} from the provided teacher lesson context. Return JSON only."
         if request.grade:
-            system_instruction = f"You generate educational MCQ quizzes in {language}, appropriate for the {request.grade} level. Return JSON only."
-        raw = await self._structured(prompt, schema, system_instruction)
+            system_instruction = f"You generate educational MCQ quizzes in {language}, appropriate for the {request.grade} level, from the provided teacher lesson context. Return JSON only."
+        raw = await self._structured(prompt, schema, system_instruction, context=context)
         raw = self._safe_json(raw, [])
         if isinstance(raw, dict):
             if "questions" in raw:
@@ -571,6 +584,39 @@ Return JSON array only."""
             if opts and not any(o.isCorrect for o in opts): opts[0].isCorrect=True
             output.append(QuizQuestion(question=item.get("question",""), options=opts[:4], explanation=item.get("explanation",""), type="mcq"))
         return output
+
+    async def _get_quiz_context(self, request: GenerateQuizRequest) -> List[Dict[str, Any]]:
+        search_query = " ".join(
+            filter(
+                None,
+                [
+                    request.course,
+                    request.module,
+                    request.chapter,
+                    request.lesson,
+                    request.title,
+                    request.description,
+                    request.prompt,
+                    request.subject,
+                    request.grade,
+                ],
+            )
+        ) or request.subject
+
+        metadata_filter = {}
+        if request.fileId:
+            metadata_filter["file_id"] = str(request.fileId)
+        if request.subject and request.subject != "General":
+            metadata_filter["subject"] = request.subject
+        if request.grade and request.grade != "General":
+            metadata_filter["grade_level"] = request.grade
+
+        all_context = await self.rag.retrieve_with_metadata(
+            query=search_query,
+            top_k=10,
+            metadata_filter=metadata_filter or None,
+        )
+        return self._select_question_context(all_context, has_specific_file=bool(request.fileId))
 
     async def ai_assistant(self, request: AIAssistantRequest) -> str:
         # Fetch the transcript from the Transcripts database table

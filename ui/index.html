@@ -451,6 +451,14 @@
                                 <input type="number" id="quiz-count" value="5" min="1" max="50">
                             </div>
                         </div>
+                        <div class="form-group">
+                            <label for="quiz-file-id">Lesson / File ID</label>
+                            <input type="text" id="quiz-file-id" placeholder="Auto-filled after processing a lesson/video">
+                        </div>
+                        <div class="form-group">
+                            <label for="quiz-prompt">Focus / Instructions</label>
+                            <textarea id="quiz-prompt" rows="3" placeholder="e.g., Focus on lesson one or the teacher's examples"></textarea>
+                        </div>
                         <button type="submit" class="primary-btn">Generate Quiz</button>
                     </form>
                     <div id="quiz-results" class="results-container hidden"></div>

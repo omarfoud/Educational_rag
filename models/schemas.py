@@ -275,6 +275,8 @@ class GenerateQuizRequest(BaseModel):
     lesson: Optional[str] = Field(default="", validation_alias=AliasChoices("lesson", "lessonName", "lessonTitle"))
     title: Optional[str] = ""
     description: Optional[str] = ""
+    fileId: Optional[str] = Field(default=None, validation_alias=AliasChoices("fileId", "file_id"))
+    prompt: Optional[str] = Field(default="", validation_alias=AliasChoices("prompt", "focus", "instructions"))
     language: Optional[str] = Field(
         default=None,
         validation_alias=AliasChoices("language", "outputLanguage", "lang", "contentLanguage", "sourceLanguage"),

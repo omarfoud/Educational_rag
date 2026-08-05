@@ -34,6 +34,7 @@ def test_quiz_uses_english_for_english_subject_even_when_label_is_arabic():
         return []
 
     service._structured = fake_structured
+    service._get_quiz_context = lambda request: _async_value([{"text": "teacher context", "score": 1.0, "metadata": {}}])
 
     asyncio.run(service.generate_quiz(GenerateQuizRequest(subject=ARABIC_ENGLISH_SUBJECT, chapter=ARABIC_GRAMMAR)))
 
@@ -121,6 +122,17 @@ def test_quiz_accepts_main_api_course_language_aliases():
     )
 
 
+def test_quiz_accepts_file_id_aliases():
+    assert GenerateQuizRequest(subject="Science", fileId="lesson-video-1").fileId == "lesson-video-1"
+    assert GenerateQuizRequest(subject="Science", file_id="lesson-video-2").fileId == "lesson-video-2"
+
+
+def test_quiz_accepts_focus_instruction_aliases():
+    assert GenerateQuizRequest(subject="Science", prompt="Focus on lesson one").prompt == "Focus on lesson one"
+    assert GenerateQuizRequest(subject="Science", focus="Focus on lesson two").prompt == "Focus on lesson two"
+    assert GenerateQuizRequest(subject="Science", instructions="Use teacher examples").prompt == "Use teacher examples"
+
+
 def test_question_metadata_accepts_frontend_file_aliases():
     request = GenerateQuestionsRequest(
         metadata={
@@ -146,3 +158,39 @@ def test_question_context_keeps_specific_file_results_without_score_threshold():
     context = [{"text": "teacher explanation", "score": 0.05, "metadata": {"file_id": "lesson-video-1"}}]
 
     assert service._select_question_context(context, has_specific_file=True) == context
+
+
+def test_quiz_context_requires_retrieved_teacher_content():
+    service = QuestionService()
+    service.rag = _FakeRag([])
+
+    context = asyncio.run(service._get_quiz_context(GenerateQuizRequest(subject="Science", fileId="missing-file")))
+
+    assert context == []
+
+
+def test_quiz_context_search_uses_focus_instructions():
+    service = QuestionService()
+    service.rag = _FakeRag([{"text": "lesson one", "score": 1.0, "metadata": {}}])
+
+    asyncio.run(
+        service._get_quiz_context(
+            GenerateQuizRequest(subject="Science", fileId="lesson-video-1", prompt="Focus on lesson one")
+        )
+    )
+
+    assert "Focus on lesson one" in service.rag.last_query
+
+
+async def _async_value(value):
+    return value
+
+
+class _FakeRag:
+    def __init__(self, context):
+        self.context = context
+        self.last_query = ""
+
+    async def retrieve_with_metadata(self, **kwargs):
+        self.last_query = kwargs.get("query", "")
+        return self.context
