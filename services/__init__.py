@@ -9,6 +9,8 @@ from .question_service import question_service
 from .progress_service import progress_service
 from .document_processing_service import document_processing_service
 from .summary_service import summary_service
+from .tts_service import tts_service
+from .voice_agent_service import voice_agent_service
 
 __all__ = [
     "file_service",
@@ -20,4 +22,6 @@ __all__ = [
     "progress_service",
     "document_processing_service",
     "summary_service",
+    "tts_service",
+    "voice_agent_service",
 ]

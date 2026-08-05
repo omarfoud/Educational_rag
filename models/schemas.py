@@ -339,6 +339,29 @@ class AIAssistantResponse(BaseModel):
     response: str
 
 
+class VoiceAgentTurnResponse(BaseModel):
+    transcript: str
+    response: str
+    language: str
+    audioUrl: str
+    audioProvider: str
+    dialect: str
+
+
+class VoiceTTSRequest(BaseModel):
+    text: str
+    dialect: Optional[str] = None
+    voice: Optional[str] = None
+    provider: Optional[str] = None
+
+
+class VoiceTTSResponse(BaseModel):
+    audioUrl: str
+    audioProvider: str
+    dialect: str
+    format: str
+
+
 class AIInsightAction(BaseModel):
     label: str
 

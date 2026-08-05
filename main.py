@@ -28,7 +28,7 @@ if _paths_to_add:
 
 from fastapi import FastAPI, File, UploadFile, Form, WebSocket, WebSocketDisconnect, HTTPException, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from config.settings import settings
 from models.enums import FileType, ProcessingStatus
@@ -50,6 +50,9 @@ from models.schemas import (
     QuizQuestion,
     AIAssistantRequest,
     AIAssistantResponse,
+    VoiceAgentTurnResponse,
+    VoiceTTSRequest,
+    VoiceTTSResponse,
     AIInsight,
 )
 from services import document_processing_service, question_service, progress_service
@@ -58,11 +61,15 @@ from services.suggest_service import suggest_service
 from services.summary_service import summary_service
 from services.analytics_service import analytics_service
 from services.database_service import database_service
+from services.file_service import file_service
+from services.tts_service import tts_service
+from services.voice_agent_service import voice_agent_service
 from utils.callbacks import progress_tracker
 
 os.makedirs(os.path.dirname(settings.log_file) if os.path.dirname(settings.log_file) else ".", exist_ok=True)
 os.makedirs(settings.upload_path, exist_ok=True)
 os.makedirs(settings.temp_path, exist_ok=True)
+os.makedirs(settings.voice_output_path, exist_ok=True)
 os.makedirs(getattr(settings, "transcript_path", "./data/transcripts"), exist_ok=True)
 
 file_handler = logging.FileHandler(settings.log_file, encoding="utf-8")
@@ -371,6 +378,70 @@ async def ai_assistant(request: AIAssistantRequest):
     except Exception as e:
         logger.error(f"AI assistant failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/voice/tts", response_model=VoiceTTSResponse)
+async def synthesize_voice(request: VoiceTTSRequest):
+    try:
+        result = await tts_service.synthesize(
+            request.text,
+            dialect=request.dialect,
+            voice=request.voice,
+            provider=request.provider,
+        )
+        return VoiceTTSResponse(
+            audioUrl=result.audio_url,
+            audioProvider=result.provider,
+            dialect=result.dialect,
+            format=result.format,
+        )
+    except Exception as e:
+        logger.error(f"Voice TTS failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/voice/agent-turn", response_model=VoiceAgentTurnResponse)
+async def voice_agent_turn(
+    audio: UploadFile = File(...),
+    fileId: str = Form(...),
+    course: str = Form(""),
+    module: str = Form(""),
+    lesson: str = Form(""),
+    dialect: Optional[str] = Form(None),
+    voice: Optional[str] = Form(None),
+    ttsProvider: Optional[str] = Form(None),
+    language: Optional[str] = Form(None),
+):
+    try:
+        audio_path = await file_service.save_upload(audio, f"voice-{int(time.time() * 1000)}", FileType.AUDIO)
+        try:
+            return await voice_agent_service.run_turn(
+                audio_path=audio_path,
+                file_id=fileId,
+                course=course,
+                module=module,
+                lesson=lesson,
+                dialect=dialect,
+                voice=voice,
+                tts_provider=ttsProvider,
+                language=language,
+            )
+        finally:
+            voice_agent_service.cleanup_upload(audio_path)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Voice agent turn failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/voice/audio/{filename}")
+async def get_voice_audio(filename: str):
+    safe_name = os.path.basename(filename)
+    audio_path = os.path.join(settings.voice_output_path, safe_name)
+    if not os.path.exists(audio_path):
+        raise HTTPException(status_code=404, detail="Voice audio not found")
+    return FileResponse(audio_path, media_type="audio/mpeg", filename=safe_name)
 
 
 # -------------------- Analytics endpoints --------------------
