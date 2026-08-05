@@ -4,7 +4,7 @@ from contextlib import contextmanager
 from sqlalchemy.pool import NullPool
 from sqlalchemy.orm import sessionmaker, Session
 from config.settings import settings
-from models.db_models import Base, Files, Metadata, Transcripts, VideoTimestamps, FileChunks
+from models.db_models import Base, Files, Metadata, Transcripts, VideoTimestamps, FileChunks, ProctoringEvents, VoiceAgentMessages
 from datetime import datetime
 from utils.metadata_extractor import extract_metadata_from_filename, compact_metadata
 import logging
@@ -35,6 +35,14 @@ EXPECTED_SCHEMA = {
     },
     "AiAssistantMessages": {
         "Id", "StudentId", "LessonId", "Role", "Content", "CreatedAt",
+    },
+    "ProctoringEvents": {
+        "Id", "SessionId", "StudentId", "EventType", "Confidence", "Details",
+        "CreatedAt",
+    },
+    "VoiceAgentMessages": {
+        "Id", "SessionId", "UserId", "Role", "Content", "AudioUrl", "Metadata",
+        "CreatedAt",
     },
 }
 
@@ -403,6 +411,100 @@ class DatabaseService:
         with self.get_session() as session:
             rows = session.query(FileChunks).order_by(FileChunks.id.desc()).limit(limit).all()
             return [self._chunk_to_dict(row) for row in rows]
+
+    def save_proctoring_event(
+        self,
+        event_id: str,
+        session_id: str,
+        student_id: str,
+        event_type: str,
+        confidence: float,
+        details: dict | None = None,
+    ) -> dict:
+        with self.get_session() as session:
+            row = ProctoringEvents(
+                id=event_id,
+                session_id=str(session_id),
+                student_id=str(student_id),
+                event_type=event_type,
+                confidence=float(confidence or 0.0),
+                details=details or {},
+                created_at=datetime.utcnow(),
+            )
+            session.add(row)
+            session.commit()
+            return {
+                "id": row.id,
+                "sessionId": row.session_id,
+                "studentId": row.student_id,
+                "eventType": row.event_type,
+                "confidence": row.confidence,
+                "details": row.details or {},
+                "timestamp": row.created_at.isoformat(),
+            }
+
+    def get_proctoring_events(self, session_id: str, limit: int = 500) -> list[dict]:
+        with self.get_session() as session:
+            rows = (
+                session.query(ProctoringEvents)
+                .filter(ProctoringEvents.session_id == str(session_id))
+                .order_by(ProctoringEvents.created_at.asc())
+                .limit(limit)
+                .all()
+            )
+            return [
+                {
+                    "id": row.id,
+                    "sessionId": row.session_id,
+                    "studentId": row.student_id,
+                    "eventType": row.event_type,
+                    "confidence": row.confidence,
+                    "details": row.details or {},
+                    "timestamp": row.created_at.isoformat() if row.created_at else None,
+                }
+                for row in rows
+            ]
+
+    def save_voice_agent_message(
+        self,
+        session_id: str,
+        user_id: str | None,
+        role: str,
+        content: str,
+        audio_url: str | None = None,
+        metadata: dict | None = None,
+    ) -> None:
+        with self.get_session() as session:
+            session.add(VoiceAgentMessages(
+                session_id=str(session_id),
+                user_id=str(user_id or ""),
+                role=role,
+                content=content or "",
+                audio_url=audio_url or "",
+                metadata_=metadata or {},
+                created_at=datetime.utcnow(),
+            ))
+            session.commit()
+
+    def get_voice_agent_messages(self, session_id: str, limit: int = 8) -> list[dict]:
+        with self.get_session() as session:
+            rows = (
+                session.query(VoiceAgentMessages)
+                .filter(VoiceAgentMessages.session_id == str(session_id))
+                .order_by(VoiceAgentMessages.created_at.desc())
+                .limit(limit)
+                .all()
+            )
+            return [
+                {
+                    "role": row.role,
+                    "content": row.content or "",
+                    "audioUrl": row.audio_url or "",
+                    "metadata": row.metadata_ or {},
+                    "createdAt": row.created_at.isoformat() if row.created_at else None,
+                }
+                for row in reversed(rows)
+            ]
 
 
 try:

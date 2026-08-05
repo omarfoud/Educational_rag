@@ -175,6 +175,35 @@ class SummaryResponse(BaseModel):
     chunksUsed: int
 
 
+class StudyGuideCitation(BaseModel):
+    sourceIndex: int
+    quote: str
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class StudyGuideRequest(BaseModel):
+    fileId: str
+    language: Optional[str] = None
+
+    @field_validator("language")
+    @classmethod
+    def validate_language(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in {"ar", "en"}:
+            raise ValueError("language must be 'ar' or 'en'")
+        return v
+
+
+class StudyGuideResponse(BaseModel):
+    fileId: str
+    overview: str
+    keyConcepts: List[str]
+    reviewQuestions: List[str]
+    citations: List[StudyGuideCitation]
+    language: str
+    sourceLanguage: str
+    chunksUsed: int
+
+
 class ProcessingJob(BaseModel):
     jobId: str
     fileId: str
@@ -340,6 +369,7 @@ class AIAssistantResponse(BaseModel):
 
 
 class VoiceAgentTurnResponse(BaseModel):
+    sessionId: Optional[str] = None
     transcript: str
     response: str
     language: str
@@ -360,6 +390,42 @@ class VoiceTTSResponse(BaseModel):
     audioProvider: str
     dialect: str
     format: str
+
+
+class ProctoringEvent(BaseModel):
+    id: str
+    sessionId: str
+    studentId: str
+    eventType: str
+    confidence: float
+    timestamp: Optional[str] = None
+    details: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ProctoringFrameRequest(BaseModel):
+    sessionId: str
+    studentId: str
+    image: Optional[str] = None
+    timestamp: Optional[str] = None
+    headPose: Optional[Dict[str, float]] = None
+    objects: List[Dict[str, Any]] = Field(default_factory=list)
+    audioEnergy: Optional[float] = None
+
+
+class ProctoringFrameResponse(BaseModel):
+    sessionId: str
+    events: List[ProctoringEvent] = Field(default_factory=list)
+    status: str = "ok"
+    analyzer: str = "heuristic"
+
+
+class ProctoringReport(BaseModel):
+    sessionId: str
+    totalEvents: int
+    riskScore: float
+    riskLevel: Literal["low", "medium", "high"]
+    eventCounts: Dict[str, int]
+    events: List[ProctoringEvent]
 
 
 class AIInsightAction(BaseModel):

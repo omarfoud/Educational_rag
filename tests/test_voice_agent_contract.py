@@ -43,7 +43,8 @@ async def test_voice_agent_turn_runs_stt_rag_and_tts(monkeypatch):
 
     async def fake_ai_assistant(request):
         assert request.fileId == "lesson-file-1"
-        assert request.message == "اشرح الدرس"
+        assert "اشرح الدرس" in request.message
+        assert "student" in request.message
         return "شرح مختصر من محتوى الدرس"
 
     async def fake_synthesize(text, dialect=None, voice=None, provider=None):
@@ -59,13 +60,17 @@ async def test_voice_agent_turn_runs_stt_rag_and_tts(monkeypatch):
     monkeypatch.setattr(voice_agent_module.audio_service, "process_audio", fake_process_audio)
     monkeypatch.setattr(voice_agent_module.question_service, "ai_assistant", fake_ai_assistant)
     monkeypatch.setattr(voice_agent_module.tts_service, "synthesize", fake_synthesize)
+    monkeypatch.setattr(voice_agent_module.database_service, "get_voice_agent_messages", lambda *args, **kwargs: [])
+    monkeypatch.setattr(voice_agent_module.database_service, "save_voice_agent_message", lambda *args, **kwargs: None)
 
     result = await service.run_turn(
         audio_path="/tmp/input.wav",
         file_id="lesson-file-1",
         dialect="egyptian",
+        session_id="voice-session-1",
     )
 
+    assert result.sessionId == "voice-session-1"
     assert result.transcript == "اشرح الدرس"
     assert result.response == "شرح مختصر من محتوى الدرس"
     assert result.audioUrl == "/api/voice/audio/voice.mp3"

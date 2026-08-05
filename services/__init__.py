@@ -11,6 +11,8 @@ from .document_processing_service import document_processing_service
 from .summary_service import summary_service
 from .tts_service import tts_service
 from .voice_agent_service import voice_agent_service
+from .proctoring_service import proctoring_service
+from .study_guide_service import study_guide_service
 
 __all__ = [
     "file_service",
@@ -24,4 +26,6 @@ __all__ = [
     "summary_service",
     "tts_service",
     "voice_agent_service",
+    "proctoring_service",
+    "study_guide_service",
 ]

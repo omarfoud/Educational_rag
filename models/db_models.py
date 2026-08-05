@@ -196,3 +196,32 @@ class AiAssistantMessages(Base):
     role = Column("Role", Integer)
     content = Column("Content", String(4000))
     created_at = Column("CreatedAt", DateTime, default=datetime.utcnow)
+
+
+class ProctoringEvents(Base):
+    __tablename__ = "ProctoringEvents"
+
+    id = Column("Id", String, primary_key=True)
+    session_id = Column("SessionId", String, index=True)
+    student_id = Column("StudentId", String, index=True)
+    event_type = Column("EventType", String, index=True)
+    confidence = Column("Confidence", Float)
+    details = Column("Details", JSON)
+    created_at = Column("CreatedAt", DateTime(timezone=True), default=datetime.utcnow, index=True)
+
+    __table_args__ = (
+        Index("idx_proctoring_events_session_created", "SessionId", "CreatedAt"),
+    )
+
+
+class VoiceAgentMessages(Base):
+    __tablename__ = "VoiceAgentMessages"
+
+    id = Column("Id", Integer, primary_key=True, autoincrement=True)
+    session_id = Column("SessionId", String, index=True)
+    user_id = Column("UserId", String, index=True)
+    role = Column("Role", String)
+    content = Column("Content", Text)
+    audio_url = Column("AudioUrl", String)
+    metadata_ = Column("Metadata", JSON)
+    created_at = Column("CreatedAt", DateTime(timezone=True), default=datetime.utcnow, index=True)

@@ -42,6 +42,8 @@ from models.schemas import (
     GenerateDescriptionResponse,
     SummaryRequest,
     SummaryResponse,
+    StudyGuideRequest,
+    StudyGuideResponse,
     FlashcardsRequest,
     Flashcard,
     AskAIRequest,
@@ -53,6 +55,9 @@ from models.schemas import (
     VoiceAgentTurnResponse,
     VoiceTTSRequest,
     VoiceTTSResponse,
+    ProctoringFrameRequest,
+    ProctoringFrameResponse,
+    ProctoringReport,
     AIInsight,
 )
 from services import document_processing_service, question_service, progress_service
@@ -64,6 +69,8 @@ from services.database_service import database_service
 from services.file_service import file_service
 from services.tts_service import tts_service
 from services.voice_agent_service import voice_agent_service
+from services.proctoring_service import proctoring_service
+from services.study_guide_service import study_guide_service
 from utils.callbacks import progress_tracker
 
 os.makedirs(os.path.dirname(settings.log_file) if os.path.dirname(settings.log_file) else ".", exist_ok=True)
@@ -411,6 +418,9 @@ async def voice_agent_turn(
     voice: Optional[str] = Form(None),
     ttsProvider: Optional[str] = Form(None),
     language: Optional[str] = Form(None),
+    sessionId: Optional[str] = Form(None),
+    userId: Optional[str] = Form(None),
+    userRole: Optional[str] = Form(None),
 ):
     try:
         audio_path = await file_service.save_upload(audio, f"voice-{int(time.time() * 1000)}", FileType.AUDIO)
@@ -425,6 +435,9 @@ async def voice_agent_turn(
                 voice=voice,
                 tts_provider=ttsProvider,
                 language=language,
+                session_id=sessionId,
+                user_id=userId,
+                user_role=userRole,
             )
         finally:
             voice_agent_service.cleanup_upload(audio_path)
@@ -442,6 +455,26 @@ async def get_voice_audio(filename: str):
     if not os.path.exists(audio_path):
         raise HTTPException(status_code=404, detail="Voice audio not found")
     return FileResponse(audio_path, media_type="audio/mpeg", filename=safe_name)
+
+
+@app.post("/api/proctoring/frame", response_model=ProctoringFrameResponse)
+async def analyze_proctoring_frame(request: ProctoringFrameRequest):
+    try:
+        return await proctoring_service.analyze_frame(request.model_dump())
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Proctoring frame analysis failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/proctoring/sessions/{session_id}/report", response_model=ProctoringReport)
+async def get_proctoring_report(session_id: str):
+    try:
+        return proctoring_service.build_report(session_id)
+    except Exception as e:
+        logger.error(f"Proctoring report failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # -------------------- Analytics endpoints --------------------
@@ -490,6 +523,21 @@ async def summarise_file(request: SummaryRequest):
     except Exception as e:
         logger.error(f"Summary failed for {request.fileId}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to generate summary: {str(e)}")
+
+
+@app.post("/api/study-guide", response_model=StudyGuideResponse)
+async def generate_study_guide(request: StudyGuideRequest):
+    try:
+        result = await study_guide_service.generate(
+            file_id=request.fileId,
+            language=request.language,
+        )
+        return StudyGuideResponse(**result)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Study guide failed for {request.fileId}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate study guide: {str(e)}")
 
 
 @app.get("/api/get-chunks/{file_id}")
@@ -550,6 +598,23 @@ async def websocket_progress(websocket: WebSocket, job_id: str):
     except Exception as e:
         logger.error(f"WebSocket error for job {job_id}: {type(e).__name__} - {repr(e)}")
         progress_service.unregister_websocket(job_id)
+
+
+@app.websocket("/ws/proctoring/{session_id}/{student_id}")
+async def websocket_proctoring(websocket: WebSocket, session_id: str, student_id: str):
+    await websocket.accept()
+    try:
+        while True:
+            payload = await websocket.receive_json()
+            payload["sessionId"] = payload.get("sessionId") or session_id
+            payload["studentId"] = payload.get("studentId") or student_id
+            result = await proctoring_service.analyze_frame(payload)
+            await websocket.send_json(result)
+    except WebSocketDisconnect:
+        logger.info("Proctoring WebSocket disconnected for session %s", session_id)
+    except Exception as e:
+        logger.error(f"Proctoring WebSocket error for session {session_id}: {type(e).__name__} - {repr(e)}")
+        await websocket.close(code=1011)
 
 
 @app.exception_handler(Exception)
