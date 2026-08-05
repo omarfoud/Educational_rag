@@ -42,6 +42,10 @@ class QuestionMetadata(BaseModel):
     semester: Optional[str] = None
     is_course_book: bool = Field(default=False, validation_alias=AliasChoices("is_course_book", "isCourseBook"))
     file_id: Optional[str] = Field(default=None, validation_alias=AliasChoices("file_id", "fileId"))
+    module_item_id: Optional[int] = Field(
+        default=None,
+        validation_alias=AliasChoices("module_item_id", "moduleItemId", "itemId", "lessonId"),
+    )
 
 
 class QuestionOption(BaseModel):
@@ -276,6 +280,10 @@ class GenerateQuizRequest(BaseModel):
     title: Optional[str] = ""
     description: Optional[str] = ""
     fileId: Optional[str] = Field(default=None, validation_alias=AliasChoices("fileId", "file_id"))
+    moduleItemId: Optional[int] = Field(
+        default=None,
+        validation_alias=AliasChoices("moduleItemId", "module_item_id", "itemId", "lessonId"),
+    )
     prompt: Optional[str] = Field(default="", validation_alias=AliasChoices("prompt", "focus", "instructions"))
     language: Optional[str] = Field(
         default=None,

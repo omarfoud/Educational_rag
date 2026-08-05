@@ -90,6 +90,9 @@ class QuestionService:
     # --------------------------- questions ---------------------------
     async def generate_questions(self, request: GenerateQuestionsRequest) -> List[GeneratedQuestion]:
         try:
+            if request.metadata and not request.metadata.file_id:
+                request.metadata.file_id = self._resolve_lesson_file_id(request.metadata.module_item_id)
+
             search_query = self._build_search_query(request.metadata, request.prompt or "")
             metadata_filter = {}
             if request.metadata:
@@ -111,6 +114,8 @@ class QuestionService:
             )
 
             context = self._select_question_context(all_context, has_specific_file=bool(metadata_filter.get("file_id")))
+            if not context and request.metadata and request.metadata.file_id:
+                context = self._get_transcript_context(request.metadata.file_id)
             if not context:
                 raise ValueError(
                     "No embedded teacher content found for this request. "
@@ -150,6 +155,9 @@ class QuestionService:
             return prompt or "general education"
         parts = [metadata.course, metadata.module, metadata.title, metadata.description, metadata.subject, metadata.grade, prompt]
         return " ".join(filter(None, parts)) or "general education"
+
+    def _resolve_lesson_file_id(self, module_item_id: Optional[int]) -> Optional[str]:
+        return database_service.get_lesson_video_file_id(module_item_id)
 
     def _select_question_context(self, retrieved_context: List[Dict[str, Any]], has_specific_file: bool = False) -> List[Dict[str, Any]]:
         if not retrieved_context:
@@ -553,6 +561,9 @@ Return JSON with: question, explanation, examples[]. Use {'Arabic' if is_ar else
         return AskAIResponse(question=raw.get("question", request.question), explanation=raw.get("explanation", ""), examples=raw.get("examples", []) or [])
 
     async def generate_quiz(self, request: GenerateQuizRequest) -> List[QuizQuestion]:
+        if not request.fileId:
+            request.fileId = self._resolve_lesson_file_id(request.moduleItemId)
+
         context = await self._get_quiz_context(request)
         if not context:
             raise ValueError(

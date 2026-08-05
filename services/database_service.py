@@ -1,4 +1,5 @@
 from sqlalchemy import create_engine, inspect
+from sqlalchemy import text as sql_text
 from contextlib import contextmanager
 from sqlalchemy.pool import NullPool
 from sqlalchemy.orm import sessionmaker, Session
@@ -281,6 +282,51 @@ class DatabaseService:
         except Exception as e:
             logger.warning(f"Could not fetch metadata from DB for {file_id}: {e}")
             return None
+
+    def get_lesson_video_file_id(self, module_item_id: int | str | None) -> str | None:
+        """Resolve a lesson/module item id to the LMS video FileId stored in Lessons.VideoId."""
+        if module_item_id in (None, ""):
+            return None
+
+        try:
+            module_item_id = int(module_item_id)
+        except (TypeError, ValueError):
+            return None
+
+        try:
+            with self.get_session() as session:
+                row = session.execute(
+                    sql_text('SELECT "VideoId" FROM "Lessons" WHERE "ModuleItemId" = :module_item_id LIMIT 1'),
+                    {"module_item_id": module_item_id},
+                ).first()
+                if row and row[0]:
+                    return str(row[0])
+
+                row = session.execute(
+                    sql_text(
+                        '''
+                        SELECT l."VideoId"
+                        FROM "ModuleItems" current_item
+                        JOIN "ModuleItems" lesson_item
+                            ON lesson_item."CourseId" = current_item."CourseId"
+                           AND lesson_item."ModuleId" = current_item."ModuleId"
+                           AND lesson_item."Order" <= current_item."Order"
+                        JOIN "Lessons" l
+                            ON l."ModuleItemId" = lesson_item."Id"
+                        WHERE current_item."Id" = :module_item_id
+                          AND l."VideoId" IS NOT NULL
+                          AND l."VideoId" <> ''
+                        ORDER BY lesson_item."Order" DESC, lesson_item."Id" DESC
+                        LIMIT 1
+                        '''
+                    ),
+                    {"module_item_id": module_item_id},
+                ).first()
+                if row and row[0]:
+                    return str(row[0])
+        except Exception as e:
+            logger.warning("Could not resolve lesson video file id for module item %s: %s", module_item_id, e)
+        return None
 
     def file_exists(self, file_id: str) -> bool:
         with self.get_session() as session:
