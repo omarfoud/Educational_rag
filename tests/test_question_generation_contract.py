@@ -128,6 +128,7 @@ def test_quiz_accepts_main_api_course_language_aliases():
 def test_quiz_accepts_file_id_aliases():
     assert GenerateQuizRequest(subject="Science", fileId="lesson-video-1").fileId == "lesson-video-1"
     assert GenerateQuizRequest(subject="Science", file_id="lesson-video-2").fileId == "lesson-video-2"
+    assert GenerateQuizRequest(subject="Science", videoId="lesson-video-3").fileId == "lesson-video-3"
 
 
 def test_quiz_accepts_lesson_item_aliases():
@@ -156,6 +157,8 @@ def test_question_metadata_accepts_frontend_file_aliases():
     assert request.metadata.is_course_book is True
     assert request.metadata.grade == "Grade 10"
     assert request.metadata.module_item_id == 42
+
+    assert GenerateQuestionsRequest(metadata={"videoId": "lesson-video-2"}).metadata.file_id == "lesson-video-2"
 
 
 def test_question_context_requires_retrieved_teacher_content():
