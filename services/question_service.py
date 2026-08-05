@@ -118,7 +118,8 @@ class QuestionService:
             metadata = request.metadata
             is_arabic = self._is_arabic_from_request_language(request.language)
             if is_arabic is None:
-                is_arabic = self._should_generate_arabic_from_material(
+                is_arabic = self._resolve_generation_language(
+                    context,
                     metadata.subject if metadata else None,
                     metadata.course if metadata else None,
                     metadata.module if metadata else None,
@@ -233,6 +234,36 @@ class QuestionService:
 
         material_text = " ".join(str(value) for value in values if value)
         return language_detector.should_use_arabic(material_text)
+
+    def _context_language_override(self, context: List[Dict[str, Any]]) -> Optional[bool]:
+        language_votes = []
+        text_parts = []
+
+        for item in context or []:
+            metadata = item.get("metadata") or {}
+            lang = str(metadata.get("language") or metadata.get("source_language") or "").strip().lower()
+            if lang.startswith("en"):
+                language_votes.append(False)
+            elif lang.startswith("ar"):
+                language_votes.append(True)
+
+            text = item.get("text")
+            if text:
+                text_parts.append(str(text))
+
+        if language_votes:
+            return language_votes.count(True) > language_votes.count(False)
+
+        context_text = " ".join(text_parts[:3])
+        if context_text.strip():
+            return language_detector.should_use_arabic(context_text)
+        return None
+
+    def _resolve_generation_language(self, context: List[Dict[str, Any]], *material_values: Optional[str]) -> bool:
+        context_language = self._context_language_override(context)
+        if context_language is not None:
+            return context_language
+        return self._should_generate_arabic_from_material(*material_values)
 
     def _language_requirements(self, language: str) -> str:
         if language == "English":
@@ -529,7 +560,8 @@ Return JSON with: question, explanation, examples[]. Use {'Arabic' if is_ar else
 
         is_ar = self._is_arabic_from_request_language(request.language)
         if is_ar is None:
-            is_ar = self._should_generate_arabic_from_material(
+            is_ar = self._resolve_generation_language(
+                context,
                 request.subject,
                 request.course,
                 request.module,

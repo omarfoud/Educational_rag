@@ -160,6 +160,20 @@ def test_question_context_keeps_specific_file_results_without_score_threshold():
     assert service._select_question_context(context, has_specific_file=True) == context
 
 
+def test_context_language_overrides_arabic_focus_for_english_video():
+    service = QuestionService()
+    context = [{"text": "Data augmentation creates realistic examples.", "metadata": {"language": "en"}}]
+
+    assert not service._resolve_generation_language(context, "ركز على الدرس الأول")
+
+
+def test_context_language_overrides_english_focus_for_arabic_video():
+    service = QuestionService()
+    context = [{"text": "\u0627\u0644\u062f\u0631\u0633 \u0639\u0646 \u0627\u0644\u0646\u062d\u0648", "metadata": {"language": "ar"}}]
+
+    assert service._resolve_generation_language(context, "Focus on lesson one")
+
+
 def test_quiz_context_requires_retrieved_teacher_content():
     service = QuestionService()
     service.rag = _FakeRag([])
