@@ -119,3 +119,30 @@ def test_quiz_accepts_main_api_course_language_aliases():
         request.course,
         request.chapter,
     )
+
+
+def test_question_metadata_accepts_frontend_file_aliases():
+    request = GenerateQuestionsRequest(
+        metadata={
+            "fileId": "lesson-video-1",
+            "isCourseBook": True,
+            "gradeLevel": "Grade 10",
+        }
+    )
+
+    assert request.metadata.file_id == "lesson-video-1"
+    assert request.metadata.is_course_book is True
+    assert request.metadata.grade == "Grade 10"
+
+
+def test_question_context_requires_retrieved_teacher_content():
+    service = QuestionService()
+
+    assert service._select_question_context([]) == []
+
+
+def test_question_context_keeps_specific_file_results_without_score_threshold():
+    service = QuestionService()
+    context = [{"text": "teacher explanation", "score": 0.05, "metadata": {"file_id": "lesson-video-1"}}]
+
+    assert service._select_question_context(context, has_specific_file=True) == context

@@ -108,11 +108,12 @@ class QuestionService:
                 metadata_filter=metadata_filter if metadata_filter else None,
             )
 
-            context = [
-                c
-                for c in all_context
-                if c.get("score", 0) >= 0.35
-            ][:5]
+            context = self._select_question_context(all_context, has_specific_file=bool(metadata_filter.get("file_id")))
+            if not context:
+                raise ValueError(
+                    "No embedded teacher content found for this request. "
+                    "Process the lesson/video into embeddings first, then generate questions."
+                )
 
             metadata = request.metadata
             is_arabic = self._is_arabic_from_request_language(request.language)
@@ -146,6 +147,20 @@ class QuestionService:
             return prompt or "general education"
         parts = [metadata.course, metadata.module, metadata.title, metadata.description, metadata.subject, metadata.grade, prompt]
         return " ".join(filter(None, parts)) or "general education"
+
+    def _select_question_context(self, retrieved_context: List[Dict[str, Any]], has_specific_file: bool = False) -> List[Dict[str, Any]]:
+        if not retrieved_context:
+            return []
+
+        if has_specific_file:
+            return retrieved_context[:8]
+
+        strong_context = [
+            c
+            for c in retrieved_context
+            if c.get("score", 0) >= 0.35
+        ][:5]
+        return strong_context or retrieved_context[:5]
 
     def _language_name(self, is_arabic: bool) -> str:
         return "Arabic" if is_arabic else "English"
@@ -240,6 +255,8 @@ Generate high-quality questions based on the provided context.
 Requirements:
 - Generate in {lang}.
 - {self._language_requirements(lang)}
+- Use only the provided teacher lesson context from retrieved embeddings as the source of truth.
+- Do not invent questions from general knowledge when the context does not support them.
 - For MCQ: provide 4 options with exactly one correct answer.
 - For True/False: correctAnswer must be "true" or "false".
 - For Short Answer: correctAnswer should be a concise model answer.
