@@ -196,10 +196,14 @@ class RAGService:
 
         # 2. Semantic Search (ChromaDB)
         # We fetch more than top_k to allow re-ranking
+        hard_filter = {}
+        if filters.get("file_id"):
+            hard_filter["file_id"] = filters["file_id"]
+
         semantic_results = await embedding_service.search(
             query=query,
             n_results=top_k * 3,
-            filter_metadata=None # Don't hard-filter if we want true hybrid, or keep it for efficiency
+            filter_metadata=hard_filter or None
         )
 
         if not semantic_results:

@@ -31,15 +31,17 @@ class ProgressUpdate(BaseModel):
 
 
 class QuestionMetadata(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     course: Optional[str] = ""
     module: Optional[str] = ""
     title: Optional[str] = ""
     description: Optional[str] = ""
     subject: Optional[str] = "General"
-    grade: Optional[str] = "General"
+    grade: Optional[str] = Field(default="General", validation_alias=AliasChoices("grade", "gradeLevel", "grade_level"))
     semester: Optional[str] = None
-    is_course_book: bool = False
-    file_id: Optional[str] = None
+    is_course_book: bool = Field(default=False, validation_alias=AliasChoices("is_course_book", "isCourseBook"))
+    file_id: Optional[str] = Field(default=None, validation_alias=AliasChoices("file_id", "fileId"))
 
 
 class QuestionOption(BaseModel):

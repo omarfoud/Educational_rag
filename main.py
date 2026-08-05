@@ -311,6 +311,9 @@ async def generate_questions(request: GenerateQuestionsRequest):
     try:
         questions = await question_service.generate_questions(request)
         return [q.model_dump() for q in questions]
+    except ValueError as e:
+        logger.warning(f"Question generation rejected: {e}")
+        raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         logger.error(f"Question generation failed: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to generate questions: {str(e)}")
