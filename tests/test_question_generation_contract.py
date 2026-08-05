@@ -1,8 +1,11 @@
 import asyncio
+import importlib
 
 from models.enums import DifficultyLevel, QuestionType
 from models.schemas import FlashcardsRequest, GenerateQuestionsRequest, GenerateQuizRequest, QuestionMetadata
 from services.question_service import QuestionService
+
+question_service_module = importlib.import_module("services.question_service")
 
 
 ARABIC_GRAMMAR = "\u0627\u0644\u0642\u0648\u0627\u0639\u062f \u0627\u0644\u0646\u062d\u0648\u064a\u0629"
@@ -181,6 +184,32 @@ def test_quiz_context_requires_retrieved_teacher_content():
     context = asyncio.run(service._get_quiz_context(GenerateQuizRequest(subject="Science", fileId="missing-file")))
 
     assert context == []
+
+
+def test_quiz_context_requires_file_id_even_if_subject_matches_context():
+    service = QuestionService()
+    service.rag = _FakeRag([{"text": "physics content", "score": 1.0, "metadata": {"subject": "Physics"}}])
+
+    context = asyncio.run(service._get_quiz_context(GenerateQuizRequest(subject="Physics")))
+
+    assert context == []
+
+
+def test_quiz_context_falls_back_to_raw_transcript_when_embeddings_missing(monkeypatch):
+    service = QuestionService()
+    service.rag = _FakeRag([])
+    monkeypatch.setattr(question_service_module.database_service, "get_transcript_raw", lambda file_id: None)
+    service._load_transcript_file = lambda file_id: {
+        "text": "ArcGIS bookmarks and measuring map distances.",
+        "language": "en",
+        "segments": [{"text": "Use bookmarks in ArcGIS.", "start": 12.0}],
+    }
+
+    context = asyncio.run(service._get_quiz_context(GenerateQuizRequest(subject="Physics", fileId="gis-video-id")))
+
+    assert context
+    assert context[0]["metadata"]["source"] == "transcript"
+    assert "ArcGIS" in context[0]["text"]
 
 
 def test_quiz_context_search_uses_focus_instructions():

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import unicodedata
 from typing import List, Dict, Any, Optional
 
@@ -28,6 +29,7 @@ from services.embedding_service import embedding_service
 from services.conversation_service import conversation_service
 from services.database_service import database_service
 from utils.language_detector import language_detector
+from config.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -618,6 +620,9 @@ Return JSON array only."""
         return output
 
     async def _get_quiz_context(self, request: GenerateQuizRequest) -> List[Dict[str, Any]]:
+        if not request.fileId:
+            return []
+
         search_query = " ".join(
             filter(
                 None,
@@ -638,9 +643,9 @@ Return JSON array only."""
         metadata_filter = {}
         if request.fileId:
             metadata_filter["file_id"] = str(request.fileId)
-        if request.subject and request.subject != "General":
+        if not request.fileId and request.subject and request.subject != "General":
             metadata_filter["subject"] = request.subject
-        if request.grade and request.grade != "General":
+        if not request.fileId and request.grade and request.grade != "General":
             metadata_filter["grade_level"] = request.grade
 
         all_context = await self.rag.retrieve_with_metadata(
@@ -648,7 +653,70 @@ Return JSON array only."""
             top_k=10,
             metadata_filter=metadata_filter or None,
         )
-        return self._select_question_context(all_context, has_specific_file=bool(request.fileId))
+        context = self._select_question_context(all_context, has_specific_file=bool(request.fileId))
+        if context:
+            return context
+
+        return self._get_transcript_context(request.fileId)
+
+    def _get_transcript_context(self, file_id: Optional[str]) -> List[Dict[str, Any]]:
+        if not file_id:
+            return []
+
+        transcript = database_service.get_transcript_raw(file_id)
+        if not transcript:
+            transcript = self._load_transcript_file(file_id)
+
+        if not transcript:
+            return []
+
+        language = transcript.get("language") or "unknown"
+        segments = transcript.get("segments") or []
+        if segments:
+            context = []
+            for segment in segments[:12]:
+                text = (segment.get("text") or "").strip()
+                if not text:
+                    continue
+                context.append({
+                    "text": text,
+                    "score": 1.0,
+                    "metadata": {
+                        "file_id": file_id,
+                        "language": language,
+                        "timestamp": segment.get("start"),
+                        "source": "transcript",
+                    },
+                })
+            if context:
+                return context
+
+        text = (transcript.get("text") or "").strip()
+        if not text:
+            return []
+
+        return [{
+            "text": text[:12000],
+            "score": 1.0,
+            "metadata": {
+                "file_id": file_id,
+                "language": language,
+                "source": "transcript",
+            },
+        }]
+
+    def _load_transcript_file(self, file_id: str) -> Optional[Dict[str, Any]]:
+        transcript_path = getattr(settings, "transcript_path", "./data/transcripts")
+        try:
+            for filename in os.listdir(transcript_path):
+                if filename.startswith(file_id) and filename.endswith(".json"):
+                    with open(os.path.join(transcript_path, filename), "r", encoding="utf-8") as f:
+                        return json.load(f)
+        except FileNotFoundError:
+            return None
+        except Exception as e:
+            logger.warning("Failed to load transcript file for %s: %s", file_id, e)
+        return None
 
     async def ai_assistant(self, request: AIAssistantRequest) -> str:
         # Fetch the transcript from the Transcripts database table
