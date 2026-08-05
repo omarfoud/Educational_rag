@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import unicodedata
 from typing import List, Dict, Any, Optional
 
@@ -28,6 +29,7 @@ from services.embedding_service import embedding_service
 from services.conversation_service import conversation_service
 from services.database_service import database_service
 from utils.language_detector import language_detector
+from config.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +90,9 @@ class QuestionService:
     # --------------------------- questions ---------------------------
     async def generate_questions(self, request: GenerateQuestionsRequest) -> List[GeneratedQuestion]:
         try:
+            if request.metadata and not request.metadata.file_id:
+                request.metadata.file_id = self._resolve_lesson_file_id(request.metadata.module_item_id)
+
             search_query = self._build_search_query(request.metadata, request.prompt or "")
             metadata_filter = {}
             if request.metadata:
@@ -109,6 +114,8 @@ class QuestionService:
             )
 
             context = self._select_question_context(all_context, has_specific_file=bool(metadata_filter.get("file_id")))
+            if not context and request.metadata and request.metadata.file_id:
+                context = self._get_transcript_context(request.metadata.file_id)
             if not context:
                 raise ValueError(
                     "No embedded teacher content found for this request. "
@@ -118,7 +125,8 @@ class QuestionService:
             metadata = request.metadata
             is_arabic = self._is_arabic_from_request_language(request.language)
             if is_arabic is None:
-                is_arabic = self._should_generate_arabic_from_material(
+                is_arabic = self._resolve_generation_language(
+                    context,
                     metadata.subject if metadata else None,
                     metadata.course if metadata else None,
                     metadata.module if metadata else None,
@@ -147,6 +155,9 @@ class QuestionService:
             return prompt or "general education"
         parts = [metadata.course, metadata.module, metadata.title, metadata.description, metadata.subject, metadata.grade, prompt]
         return " ".join(filter(None, parts)) or "general education"
+
+    def _resolve_lesson_file_id(self, module_item_id: Optional[int]) -> Optional[str]:
+        return database_service.get_lesson_video_file_id(module_item_id)
 
     def _select_question_context(self, retrieved_context: List[Dict[str, Any]], has_specific_file: bool = False) -> List[Dict[str, Any]]:
         if not retrieved_context:
@@ -233,6 +244,36 @@ class QuestionService:
 
         material_text = " ".join(str(value) for value in values if value)
         return language_detector.should_use_arabic(material_text)
+
+    def _context_language_override(self, context: List[Dict[str, Any]]) -> Optional[bool]:
+        language_votes = []
+        text_parts = []
+
+        for item in context or []:
+            metadata = item.get("metadata") or {}
+            lang = str(metadata.get("language") or metadata.get("source_language") or "").strip().lower()
+            if lang.startswith("en"):
+                language_votes.append(False)
+            elif lang.startswith("ar"):
+                language_votes.append(True)
+
+            text = item.get("text")
+            if text:
+                text_parts.append(str(text))
+
+        if language_votes:
+            return language_votes.count(True) > language_votes.count(False)
+
+        context_text = " ".join(text_parts[:3])
+        if context_text.strip():
+            return language_detector.should_use_arabic(context_text)
+        return None
+
+    def _resolve_generation_language(self, context: List[Dict[str, Any]], *material_values: Optional[str]) -> bool:
+        context_language = self._context_language_override(context)
+        if context_language is not None:
+            return context_language
+        return self._should_generate_arabic_from_material(*material_values)
 
     def _language_requirements(self, language: str) -> str:
         if language == "English":
@@ -520,9 +561,20 @@ Return JSON with: question, explanation, examples[]. Use {'Arabic' if is_ar else
         return AskAIResponse(question=raw.get("question", request.question), explanation=raw.get("explanation", ""), examples=raw.get("examples", []) or [])
 
     async def generate_quiz(self, request: GenerateQuizRequest) -> List[QuizQuestion]:
+        if not request.fileId:
+            request.fileId = self._resolve_lesson_file_id(request.moduleItemId)
+
+        context = await self._get_quiz_context(request)
+        if not context:
+            raise ValueError(
+                "No embedded teacher content found for this quiz request. "
+                "Process the lesson/video into embeddings first, then generate the quiz."
+            )
+
         is_ar = self._is_arabic_from_request_language(request.language)
         if is_ar is None:
-            is_ar = self._should_generate_arabic_from_material(
+            is_ar = self._resolve_generation_language(
+                context,
                 request.subject,
                 request.course,
                 request.module,
@@ -530,6 +582,7 @@ Return JSON with: question, explanation, examples[]. Use {'Arabic' if is_ar else
                 request.lesson,
                 request.title,
                 request.description,
+                request.prompt,
             )
         language = self._language_name(is_ar)
         prompt = f"""Generate {request.numberOfQuestions} MCQ quiz questions.
@@ -540,17 +593,22 @@ Chapter: {request.chapter or ''}
 Lesson: {request.lesson or ''}
 Title: {request.title or ''}
 Description: {request.description or ''}
+File ID: {request.fileId or ''}
+Focus / Teacher instructions: {request.prompt or ''}
 Grade/Level: {request.grade or ''}
 Difficulty: {request.difficulty.value}
 Use {language}.
 {self._language_requirements(language)}
+Use only the provided teacher lesson context from retrieved embeddings as the source of truth.
+Prioritize the focus/instructions when selecting concepts, but only if the provided context supports them.
+Do not invent quiz questions from general knowledge when the context does not support them.
 Each question must have 4 options and exactly one correct option.
 Return JSON array only."""
         schema = {"type":"array","items":{"question":"string","options":[{"text":"string","isCorrect":"boolean"}],"explanation":"string","type":"mcq"}}
-        system_instruction = f"You generate MCQ quizzes in {language}. Return JSON only."
+        system_instruction = f"You generate MCQ quizzes in {language} from the provided teacher lesson context. Return JSON only."
         if request.grade:
-            system_instruction = f"You generate educational MCQ quizzes in {language}, appropriate for the {request.grade} level. Return JSON only."
-        raw = await self._structured(prompt, schema, system_instruction)
+            system_instruction = f"You generate educational MCQ quizzes in {language}, appropriate for the {request.grade} level, from the provided teacher lesson context. Return JSON only."
+        raw = await self._structured(prompt, schema, system_instruction, context=context)
         raw = self._safe_json(raw, [])
         if isinstance(raw, dict):
             if "questions" in raw:
@@ -571,6 +629,105 @@ Return JSON array only."""
             if opts and not any(o.isCorrect for o in opts): opts[0].isCorrect=True
             output.append(QuizQuestion(question=item.get("question",""), options=opts[:4], explanation=item.get("explanation",""), type="mcq"))
         return output
+
+    async def _get_quiz_context(self, request: GenerateQuizRequest) -> List[Dict[str, Any]]:
+        if not request.fileId:
+            return []
+
+        search_query = " ".join(
+            filter(
+                None,
+                [
+                    request.course,
+                    request.module,
+                    request.chapter,
+                    request.lesson,
+                    request.title,
+                    request.description,
+                    request.prompt,
+                    request.subject,
+                    request.grade,
+                ],
+            )
+        ) or request.subject
+
+        metadata_filter = {}
+        if request.fileId:
+            metadata_filter["file_id"] = str(request.fileId)
+        if not request.fileId and request.subject and request.subject != "General":
+            metadata_filter["subject"] = request.subject
+        if not request.fileId and request.grade and request.grade != "General":
+            metadata_filter["grade_level"] = request.grade
+
+        all_context = await self.rag.retrieve_with_metadata(
+            query=search_query,
+            top_k=10,
+            metadata_filter=metadata_filter or None,
+        )
+        context = self._select_question_context(all_context, has_specific_file=bool(request.fileId))
+        if context:
+            return context
+
+        return self._get_transcript_context(request.fileId)
+
+    def _get_transcript_context(self, file_id: Optional[str]) -> List[Dict[str, Any]]:
+        if not file_id:
+            return []
+
+        transcript = database_service.get_transcript_raw(file_id)
+        if not transcript:
+            transcript = self._load_transcript_file(file_id)
+
+        if not transcript:
+            return []
+
+        language = transcript.get("language") or "unknown"
+        segments = transcript.get("segments") or []
+        if segments:
+            context = []
+            for segment in segments[:12]:
+                text = (segment.get("text") or "").strip()
+                if not text:
+                    continue
+                context.append({
+                    "text": text,
+                    "score": 1.0,
+                    "metadata": {
+                        "file_id": file_id,
+                        "language": language,
+                        "timestamp": segment.get("start"),
+                        "source": "transcript",
+                    },
+                })
+            if context:
+                return context
+
+        text = (transcript.get("text") or "").strip()
+        if not text:
+            return []
+
+        return [{
+            "text": text[:12000],
+            "score": 1.0,
+            "metadata": {
+                "file_id": file_id,
+                "language": language,
+                "source": "transcript",
+            },
+        }]
+
+    def _load_transcript_file(self, file_id: str) -> Optional[Dict[str, Any]]:
+        transcript_path = getattr(settings, "transcript_path", "./data/transcripts")
+        try:
+            for filename in os.listdir(transcript_path):
+                if filename.startswith(file_id) and filename.endswith(".json"):
+                    with open(os.path.join(transcript_path, filename), "r", encoding="utf-8") as f:
+                        return json.load(f)
+        except FileNotFoundError:
+            return None
+        except Exception as e:
+            logger.warning("Failed to load transcript file for %s: %s", file_id, e)
+        return None
 
     async def ai_assistant(self, request: AIAssistantRequest) -> str:
         # Fetch the transcript from the Transcripts database table

@@ -1,8 +1,11 @@
 import asyncio
+import importlib
 
 from models.enums import DifficultyLevel, QuestionType
 from models.schemas import FlashcardsRequest, GenerateQuestionsRequest, GenerateQuizRequest, QuestionMetadata
 from services.question_service import QuestionService
+
+question_service_module = importlib.import_module("services.question_service")
 
 
 ARABIC_GRAMMAR = "\u0627\u0644\u0642\u0648\u0627\u0639\u062f \u0627\u0644\u0646\u062d\u0648\u064a\u0629"
@@ -34,6 +37,7 @@ def test_quiz_uses_english_for_english_subject_even_when_label_is_arabic():
         return []
 
     service._structured = fake_structured
+    service._get_quiz_context = lambda request: _async_value([{"text": "teacher context", "score": 1.0, "metadata": {}}])
 
     asyncio.run(service.generate_quiz(GenerateQuizRequest(subject=ARABIC_ENGLISH_SUBJECT, chapter=ARABIC_GRAMMAR)))
 
@@ -121,18 +125,40 @@ def test_quiz_accepts_main_api_course_language_aliases():
     )
 
 
+def test_quiz_accepts_file_id_aliases():
+    assert GenerateQuizRequest(subject="Science", fileId="lesson-video-1").fileId == "lesson-video-1"
+    assert GenerateQuizRequest(subject="Science", file_id="lesson-video-2").fileId == "lesson-video-2"
+    assert GenerateQuizRequest(subject="Science", videoId="lesson-video-3").fileId == "lesson-video-3"
+
+
+def test_quiz_accepts_lesson_item_aliases():
+    assert GenerateQuizRequest(subject="Science", moduleItemId=42).moduleItemId == 42
+    assert GenerateQuizRequest(subject="Science", itemId=43).moduleItemId == 43
+    assert GenerateQuizRequest(subject="Science", lessonId=44).moduleItemId == 44
+
+
+def test_quiz_accepts_focus_instruction_aliases():
+    assert GenerateQuizRequest(subject="Science", prompt="Focus on lesson one").prompt == "Focus on lesson one"
+    assert GenerateQuizRequest(subject="Science", focus="Focus on lesson two").prompt == "Focus on lesson two"
+    assert GenerateQuizRequest(subject="Science", instructions="Use teacher examples").prompt == "Use teacher examples"
+
+
 def test_question_metadata_accepts_frontend_file_aliases():
     request = GenerateQuestionsRequest(
         metadata={
             "fileId": "lesson-video-1",
             "isCourseBook": True,
             "gradeLevel": "Grade 10",
+            "moduleItemId": 42,
         }
     )
 
     assert request.metadata.file_id == "lesson-video-1"
     assert request.metadata.is_course_book is True
     assert request.metadata.grade == "Grade 10"
+    assert request.metadata.module_item_id == 42
+
+    assert GenerateQuestionsRequest(metadata={"videoId": "lesson-video-2"}).metadata.file_id == "lesson-video-2"
 
 
 def test_question_context_requires_retrieved_teacher_content():
@@ -146,3 +172,130 @@ def test_question_context_keeps_specific_file_results_without_score_threshold():
     context = [{"text": "teacher explanation", "score": 0.05, "metadata": {"file_id": "lesson-video-1"}}]
 
     assert service._select_question_context(context, has_specific_file=True) == context
+
+
+def test_generate_questions_resolves_lesson_video_id(monkeypatch):
+    service = QuestionService()
+    captured = {}
+
+    monkeypatch.setattr(question_service_module.database_service, "get_lesson_video_file_id", lambda item_id: "gis-video-id")
+
+    async def fake_retrieve_with_metadata(query, top_k=5, metadata_filter=None, min_score=0.0):
+        captured["metadata_filter"] = metadata_filter
+        return [{"text": "ArcGIS content", "score": 1.0, "metadata": {"file_id": "gis-video-id", "language": "en"}}]
+
+    async def fake_generate_structured_output(prompt, context, output_schema, system_instruction=None):
+        captured["context"] = context
+        return []
+
+    service.rag = _FakeRag([])
+    service.rag.retrieve_with_metadata = fake_retrieve_with_metadata
+    service.rag.generate_structured_output = fake_generate_structured_output
+
+    asyncio.run(
+        service.generate_questions(
+            GenerateQuestionsRequest(metadata={"subject": "Physics", "moduleItemId": 42}, questionsNumber=1)
+        )
+    )
+
+    assert captured["metadata_filter"]["file_id"] == "gis-video-id"
+    assert captured["context"][0]["metadata"]["file_id"] == "gis-video-id"
+
+
+def test_context_language_overrides_arabic_focus_for_english_video():
+    service = QuestionService()
+    context = [{"text": "Data augmentation creates realistic examples.", "metadata": {"language": "en"}}]
+
+    assert not service._resolve_generation_language(context, "ركز على الدرس الأول")
+
+
+def test_context_language_overrides_english_focus_for_arabic_video():
+    service = QuestionService()
+    context = [{"text": "\u0627\u0644\u062f\u0631\u0633 \u0639\u0646 \u0627\u0644\u0646\u062d\u0648", "metadata": {"language": "ar"}}]
+
+    assert service._resolve_generation_language(context, "Focus on lesson one")
+
+
+def test_quiz_context_requires_retrieved_teacher_content():
+    service = QuestionService()
+    service.rag = _FakeRag([])
+
+    context = asyncio.run(service._get_quiz_context(GenerateQuizRequest(subject="Science", fileId="missing-file")))
+
+    assert context == []
+
+
+def test_quiz_context_requires_file_id_even_if_subject_matches_context():
+    service = QuestionService()
+    service.rag = _FakeRag([{"text": "physics content", "score": 1.0, "metadata": {"subject": "Physics"}}])
+
+    context = asyncio.run(service._get_quiz_context(GenerateQuizRequest(subject="Physics")))
+
+    assert context == []
+
+
+def test_quiz_context_falls_back_to_raw_transcript_when_embeddings_missing(monkeypatch):
+    service = QuestionService()
+    service.rag = _FakeRag([])
+    monkeypatch.setattr(question_service_module.database_service, "get_transcript_raw", lambda file_id: None)
+    service._load_transcript_file = lambda file_id: {
+        "text": "ArcGIS bookmarks and measuring map distances.",
+        "language": "en",
+        "segments": [{"text": "Use bookmarks in ArcGIS.", "start": 12.0}],
+    }
+
+    context = asyncio.run(service._get_quiz_context(GenerateQuizRequest(subject="Physics", fileId="gis-video-id")))
+
+    assert context
+    assert context[0]["metadata"]["source"] == "transcript"
+    assert "ArcGIS" in context[0]["text"]
+
+
+def test_quiz_resolves_lesson_video_id_before_retrieval(monkeypatch):
+    service = QuestionService()
+    captured = {}
+
+    monkeypatch.setattr(question_service_module.database_service, "get_lesson_video_file_id", lambda item_id: "gis-video-id")
+
+    async def fake_get_context(request):
+        captured["file_id"] = request.fileId
+        return [{"text": "ArcGIS content", "score": 1.0, "metadata": {"file_id": request.fileId, "language": "en"}}]
+
+    async def fake_structured(prompt, schema, system_instruction="", context=None):
+        captured["context"] = context
+        return []
+
+    service._get_quiz_context = fake_get_context
+    service._structured = fake_structured
+
+    asyncio.run(service.generate_quiz(GenerateQuizRequest(subject="Physics", moduleItemId=42)))
+
+    assert captured["file_id"] == "gis-video-id"
+    assert captured["context"][0]["metadata"]["file_id"] == "gis-video-id"
+
+
+def test_quiz_context_search_uses_focus_instructions():
+    service = QuestionService()
+    service.rag = _FakeRag([{"text": "lesson one", "score": 1.0, "metadata": {}}])
+
+    asyncio.run(
+        service._get_quiz_context(
+            GenerateQuizRequest(subject="Science", fileId="lesson-video-1", prompt="Focus on lesson one")
+        )
+    )
+
+    assert "Focus on lesson one" in service.rag.last_query
+
+
+async def _async_value(value):
+    return value
+
+
+class _FakeRag:
+    def __init__(self, context):
+        self.context = context
+        self.last_query = ""
+
+    async def retrieve_with_metadata(self, **kwargs):
+        self.last_query = kwargs.get("query", "")
+        return self.context

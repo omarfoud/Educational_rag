@@ -71,6 +71,16 @@ class Settings(BaseSettings):
     whisper_model: str = 'base'
     whisper_device: str = 'cpu'
 
+    # Voice agent / TTS
+    tts_provider: str = 'openai'  # openai | lahgtna
+    openai_tts_model: str = 'gpt-4o-mini-tts'
+    openai_tts_voice: str = 'alloy'
+    openai_tts_format: str = 'mp3'
+    lahgtna_tts_base_url: str = ''
+    lahgtna_tts_api_key: str = ''
+    voice_output_path: str = './data/voice'
+    voice_default_dialect: str = 'egyptian'
+
     # OCR
     ocr_provider: str = 'local'  # openai | local
     openai_ocr_model: str = 'gpt-4.1-mini'

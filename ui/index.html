@@ -203,6 +203,11 @@
                         </div>
 
                         <div class="form-group">
+                            <label for="qa-file-id">Lesson / File ID</label>
+                            <input type="text" id="qa-file-id" placeholder="Auto-filled after processing a lesson/video">
+                        </div>
+
+                        <div class="form-group">
                             <div class="flex-between">
                                 <label for="qa-prompt">Topic / Prompt</label>
                                 <select id="qa-topic-suggestions" class="mini-select hidden">
@@ -445,6 +450,14 @@
                                 <label for="quiz-count">Number of Questions</label>
                                 <input type="number" id="quiz-count" value="5" min="1" max="50">
                             </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="quiz-file-id">Lesson / File ID</label>
+                            <input type="text" id="quiz-file-id" placeholder="Auto-filled after processing a lesson/video">
+                        </div>
+                        <div class="form-group">
+                            <label for="quiz-prompt">Focus / Instructions</label>
+                            <textarea id="quiz-prompt" rows="3" placeholder="e.g., Focus on lesson one or the teacher's examples"></textarea>
                         </div>
                         <button type="submit" class="primary-btn">Generate Quiz</button>
                     </form>
