@@ -11,6 +11,7 @@ import json
 import time
 from contextlib import asynccontextmanager
 from typing import Optional
+from sqlalchemy.engine import make_url
 
 # Add local binaries to PATH
 _project_root = os.path.dirname(os.path.abspath(__file__))
@@ -89,11 +90,30 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def _database_runtime_info() -> dict:
+    try:
+        db_url = make_url(settings.database_url)
+        return {
+            "driver": db_url.drivername,
+            "host": db_url.host or "local",
+            "database": db_url.database,
+            "configured": bool(settings.database_url),
+            "isDefaultSqlite": settings.database_url == "sqlite:///./data/app.db",
+        }
+    except Exception as exc:
+        return {"configured": False, "error": str(exc)}
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting AI/RAG Backend Server...")
     logger.info(f"Vector DB: {settings.vector_db_path}")
     logger.info(f"Upload Path: {settings.upload_path}")
+    if os.getenv("RAILWAY_ENVIRONMENT") and settings.database_url == "sqlite:///./data/app.db":
+        raise RuntimeError(
+            "DATABASE_URL is not configured for Railway. "
+            "Refusing to use local SQLite because transcripts will not appear in Railway PostgreSQL."
+        )
     try:
         database_service.init_db()
     except Exception as e:
@@ -140,6 +160,7 @@ async def health_check():
         "deployment": {
             "commit": os.getenv("RAILWAY_GIT_COMMIT_SHA") or os.getenv("GIT_COMMIT_SHA") or os.getenv("SOURCE_VERSION"),
         },
+        "relational_database": _database_runtime_info(),
         "settings": {
             "whisper_model": settings.whisper_model,
             "transcription_provider": settings.transcription_provider,
