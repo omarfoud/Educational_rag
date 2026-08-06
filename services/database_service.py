@@ -137,6 +137,7 @@ class DatabaseService:
                 
                 if db_file is None:
                     uploaded_by = uploaded_by_id or self._get_default_uploaded_by_id(session)
+                    tenant_id = self._get_default_tenant_id(session)
                     db_file = Files(
                         id=file_id,
                         name=original_name,
@@ -147,7 +148,7 @@ class DatabaseService:
                         metadata_=metadata,
                         status="processing",
                         uploaded_by=uploaded_by,
-                        tenant_id=None
+                        tenant_id=tenant_id
                     )
                     session.add(db_file)
                 else:
@@ -193,6 +194,16 @@ class DatabaseService:
             return str(row[0]) if row and row[0] else None
         except Exception as exc:
             logger.warning("Could not resolve default UploadedById: %s", exc)
+            return None
+
+    def _get_default_tenant_id(self, session) -> int | None:
+        try:
+            row = session.execute(
+                sql_text('SELECT "Id" FROM "Tenants" ORDER BY "Id" LIMIT 1')
+            ).first()
+            return int(row[0]) if row and row[0] is not None else None
+        except Exception as exc:
+            logger.warning("Could not resolve default TenantId: %s", exc)
             return None
 
     def save_transcript(
@@ -371,7 +382,7 @@ class DatabaseService:
 
                     row = FileChunks(
                         file_id=file_id,
-                        tenant_id=file.tenant_id if file else None,
+                        tenant_id=file.tenant_id if file and file.tenant_id is not None else self._get_default_tenant_id(session),
                         text=(chunk or '').replace('\x00', ''),
                         tokens=len((chunk or '').split()),
                         chunk_index=start_idx + i,
