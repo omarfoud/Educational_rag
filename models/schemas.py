@@ -248,6 +248,7 @@ class EmbedFileRequest(BaseModel):
     callbackUrl: Optional[str] = None
     semester: Optional[str] = None
     isCourseBook: bool = False
+    uploadedById: Optional[str] = None
 
 
 class EmbedFileResponse(BaseModel):

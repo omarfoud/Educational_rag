@@ -55,6 +55,7 @@ class DocumentProcessingService:
         translate_to_english: bool = False,
         semester: Optional[str] = None,
         is_course_book: bool = False,
+        uploaded_by_id: Optional[str] = None,
         file_path: Optional[str] = None,
         original_name: Optional[str] = None,
         download_url: Optional[str] = None,
@@ -97,7 +98,8 @@ class DocumentProcessingService:
                 subject=inferred_metadata.get('subject'),
                 grade_level=inferred_metadata.get('grade_level') or inferred_metadata.get('grade'),
                 semester=effective_semester,
-                is_course_book=is_course_book
+                is_course_book=is_course_book,
+                uploaded_by_id=uploaded_by_id,
             )
 
             # 2. Extract content based on type

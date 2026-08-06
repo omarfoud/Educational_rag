@@ -136,6 +136,7 @@ class DatabaseService:
                 metadata = compact_metadata(metadata)
                 
                 if db_file is None:
+                    uploaded_by = uploaded_by_id or self._get_default_uploaded_by_id(session)
                     db_file = Files(
                         id=file_id,
                         name=original_name,
@@ -145,7 +146,7 @@ class DatabaseService:
                         storage_provider="Local",
                         metadata_=metadata,
                         status="processing",
-                        uploaded_by=uploaded_by_id or "d521a6ac-157e-4719-8964-b9f6bf1cf389",
+                        uploaded_by=uploaded_by,
                         tenant_id=None
                     )
                     session.add(db_file)
@@ -183,6 +184,16 @@ class DatabaseService:
                 session.rollback()
                 logger.error(f"Failed to save file info: {e}")
                 raise
+
+    def _get_default_uploaded_by_id(self, session) -> str | None:
+        try:
+            row = session.execute(
+                sql_text('SELECT "Id" FROM "AspNetUsers" ORDER BY "Id" LIMIT 1')
+            ).first()
+            return str(row[0]) if row and row[0] else None
+        except Exception as exc:
+            logger.warning("Could not resolve default UploadedById: %s", exc)
+            return None
 
     def save_transcript(
         self,

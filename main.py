@@ -188,6 +188,7 @@ async def embed_and_transcribe(
     translateToEnglish: bool = Form(False),
     semester: Optional[str] = Form(None),
     isCourseBook: bool = Form(False),
+    uploadedById: Optional[str] = Form(None),
 ):
     try:
         file_type = FileType(type)
@@ -210,6 +211,7 @@ async def embed_and_transcribe(
             translate_to_english=translateToEnglish,
             semester=semester,
             is_course_book=isCourseBook,
+            uploaded_by_id=uploadedById,
             file_path=file_path,
             original_name=original_name,
         )
@@ -226,6 +228,7 @@ async def generate_transcript(
     fileId: str = Form(...),
     callbackUrl: Optional[str] = Form(None),
     jobId: str = Form(...),
+    uploadedById: Optional[str] = Form(None),
 ):
     """Queue an audio transcription and store its transcript/chunks for RAG."""
     try:
@@ -241,6 +244,7 @@ async def generate_transcript(
             file_type=FileType.AUDIO,
             job_id=jobId,
             callback_url=callbackUrl,
+            uploaded_by_id=uploadedById,
             file_path=file_path,
             original_name=original_name,
         )
@@ -260,6 +264,7 @@ async def embed_file(
     callbackUrl: Optional[str] = Form(None),
     semester: Optional[str] = Form(None),
     isCourseBook: bool = Form(False),
+    uploadedById: Optional[str] = Form(None),
 ):
     """Embed a document or video file for later RAG use."""
     try:
@@ -272,12 +277,14 @@ async def embed_file(
             callback_url_val = req_data.callbackUrl
             semester_val = req_data.semester
             is_course_book_val = req_data.isCourseBook
+            uploaded_by_id_val = req_data.uploadedById
         else:
             file_id_val = fileId
             type_val = type
             callback_url_val = callbackUrl
             semester_val = semester
             is_course_book_val = isCourseBook
+            uploaded_by_id_val = uploadedById
 
         if not file_id_val or not type_val:
             raise HTTPException(status_code=400, detail="Missing required parameters: fileId and type")
@@ -311,6 +318,7 @@ async def embed_file(
                 callback_url=callback_url_val,
                 semester=semester_val,
                 is_course_book=is_course_book_val,
+                uploaded_by_id=uploaded_by_id_val,
                 download_url=download_url,
                 headers=headers
             )
@@ -330,6 +338,7 @@ async def embed_file(
                 callback_url=callback_url_val,
                 semester=semester_val,
                 is_course_book=is_course_book_val,
+                uploaded_by_id=uploaded_by_id_val,
                 file_path=file_path,
                 original_name=file.filename,
             )
