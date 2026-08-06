@@ -4,7 +4,12 @@ Handles document, audio, and video files with progress tracking.
 """
 
 import asyncio
+import base64
+import hashlib
+import hmac
 import os
+import time
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 from typing import List, Dict, Optional, Tuple, Any
 import logging
 from PyPDF2 import PdfReader
@@ -59,7 +64,8 @@ class DocumentProcessingService:
         file_path: Optional[str] = None,
         original_name: Optional[str] = None,
         download_url: Optional[str] = None,
-        headers: Optional[dict] = None
+        headers: Optional[dict] = None,
+        bunny_library_id: Optional[str] = None,
     ) -> dict:
         """
         Process a file through the complete pipeline.
@@ -79,6 +85,13 @@ class DocumentProcessingService:
                 type_dir = os.path.join(self.file_service.upload_path, file_type.value)
                 os.makedirs(type_dir, exist_ok=True)
                 file_path = os.path.join(type_dir, f"{file_id}.mp4")
+                if file_type == FileType.VIDEO and self._looks_like_bunny_video_id(file_id):
+                    download_url, headers, original_name = await self._resolve_bunny_stream_download(
+                        video_id=file_id,
+                        explicit_url=download_url,
+                        headers=headers or {},
+                        bunny_library_id=bunny_library_id,
+                    )
                 await self._download_file(download_url, file_path, headers or {}, job_id, callback_url)
                 original_name = original_name or f"{file_id}.mp4"
             else:
@@ -553,7 +566,16 @@ class DocumentProcessingService:
         async with httpx.AsyncClient(follow_redirects=True, timeout=600.0) as client:
             async with client.stream("GET", url, headers=headers) as response:
                 if response.status_code != 200:
+                    body = (await response.aread()).decode("utf-8", errors="replace")[:300]
                     error_msg = f"Failed to download video from CDN, status code: {response.status_code}"
+                    if response.status_code == 403:
+                        error_msg += (
+                            ". Bunny Stream denied direct file access. "
+                            "Use a valid direct download URL, enable MP4 fallback/public access, "
+                            "or configure Bunny token auth for private videos."
+                        )
+                    if body:
+                        error_msg += f" Response preview: {body}"
                     logger.error(error_msg)
                     raise ValueError(error_msg)
                 
@@ -585,6 +607,91 @@ class DocumentProcessingService:
                         os.remove(temp_dest_path)
                     logger.error(f"Error during video download: {e}")
                     raise
+
+    def _looks_like_bunny_video_id(self, value: str) -> bool:
+        return bool(value and len(value) == 36 and value.count("-") == 4)
+
+    async def _resolve_bunny_stream_download(
+        self,
+        video_id: str,
+        explicit_url: str,
+        headers: dict,
+        bunny_library_id: Optional[str] = None,
+    ) -> tuple[str, dict, str]:
+        import httpx
+
+        library_id = str(bunny_library_id or settings.bunny_stream_library_id or "").strip()
+        api_key = (settings.bunny_access_key or "").strip()
+        if not library_id:
+            return explicit_url, headers, f"{video_id}.mp4"
+
+        api_url = f"https://video.bunnycdn.com/library/{library_id}/videos/{video_id}"
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(api_url, headers={"AccessKey": api_key} if api_key else {})
+        if response.status_code != 200:
+            raise ValueError(
+                f"Could not load Bunny Stream video metadata for {video_id}; "
+                f"status code: {response.status_code}"
+            )
+
+        metadata = response.json()
+        cdn_host = (settings.bunny_stream_cdn_hostname or "").strip()
+        if not cdn_host:
+            thumbnail_url = metadata.get("thumbnailUrl") or ""
+            parsed = urlparse(thumbnail_url)
+            cdn_host = parsed.netloc
+        if not cdn_host:
+            return explicit_url, headers, metadata.get("title") or f"{video_id}.mp4"
+
+        resolutions = [
+            item.strip()
+            for item in str(metadata.get("availableResolutions") or "").split(",")
+            if item.strip()
+        ]
+        preferred_resolution = resolutions[-1] if resolutions else "720p"
+        stream_url = f"https://{cdn_host}/{video_id}/play_{preferred_resolution}.mp4"
+        if not metadata.get("hasMP4Fallback", True):
+            stream_url = f"https://{cdn_host}/{video_id}/original"
+        stream_url = self._sign_bunny_cdn_url(stream_url)
+
+        resolved_headers = dict(headers or {})
+        resolved_headers.setdefault("Referer", "https://ai-stage.nabrahq.com/")
+        if api_key:
+            resolved_headers.setdefault("AccessKey", api_key)
+
+        title = metadata.get("title") or f"{video_id}.mp4"
+        if not os.path.splitext(title)[1]:
+            title = f"{title}.mp4"
+        parsed_stream_url = urlparse(stream_url)
+        logger.info(
+            "Resolved Bunny Stream video %s to %s",
+            video_id,
+            urlunparse(parsed_stream_url._replace(query="")),
+        )
+        return stream_url, resolved_headers, title
+
+    def _sign_bunny_cdn_url(self, url: str) -> str:
+        token_key = (settings.bunny_cdn_token_key or "").strip()
+        if not token_key:
+            return url
+
+        parsed = urlparse(url)
+        expires = int(time.time()) + max(settings.bunny_cdn_token_expiration_seconds, 60)
+        query_pairs = [
+            (key, value)
+            for key, value in parse_qsl(parsed.query, keep_blank_values=True)
+            if key not in {"token", "expires"}
+        ]
+        signing_data = "&".join(f"{key}={value}" for key, value in sorted(query_pairs))
+        signature_payload = f"{parsed.path}{expires}{signing_data}".encode("utf-8")
+        digest = hmac.new(
+            token_key.encode("utf-8"),
+            signature_payload,
+            hashlib.sha256,
+        ).digest()
+        token = "HS256-" + base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+        signed_query = urlencode(query_pairs + [("token", token), ("expires", str(expires))])
+        return urlunparse(parsed._replace(query=signed_query))
 
 
 # Global instance

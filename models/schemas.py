@@ -249,6 +249,8 @@ class EmbedFileRequest(BaseModel):
     semester: Optional[str] = None
     isCourseBook: bool = False
     uploadedById: Optional[str] = None
+    downloadUrl: Optional[str] = None
+    bunnyLibraryId: Optional[str] = None
 
 
 class EmbedFileResponse(BaseModel):

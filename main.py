@@ -199,6 +199,8 @@ async def embed_and_transcribe(
     semester: Optional[str] = Form(None),
     isCourseBook: bool = Form(False),
     uploadedById: Optional[str] = Form(None),
+    downloadUrl: Optional[str] = Form(None),
+    bunnyLibraryId: Optional[str] = Form(None),
 ):
     try:
         file_type = FileType(type)
@@ -288,6 +290,8 @@ async def embed_file(
             semester_val = req_data.semester
             is_course_book_val = req_data.isCourseBook
             uploaded_by_id_val = req_data.uploadedById
+            download_url_val = req_data.downloadUrl
+            bunny_library_id_val = req_data.bunnyLibraryId
         else:
             file_id_val = fileId
             type_val = type
@@ -295,6 +299,8 @@ async def embed_file(
             semester_val = semester
             is_course_book_val = isCourseBook
             uploaded_by_id_val = uploadedById
+            download_url_val = downloadUrl
+            bunny_library_id_val = bunnyLibraryId
 
         if not file_id_val or not type_val:
             raise HTTPException(status_code=400, detail="Missing required parameters: fileId and type")
@@ -311,10 +317,10 @@ async def embed_file(
 
         # If it's a video, or there is no file, download from Bunny CDN in the background
         if file_type == FileType.VIDEO or not file:
-            download_url = f"https://vz-51ee5657-212.b-cdn.net/{file_id_val}/original"
+            resolved_download_url = download_url_val or f"https://vz-51ee5657-212.b-cdn.net/{file_id_val}/original"
             headers = {
                 "AccessKey": settings.bunny_access_key,
-                "Referer": "https://ai.nabrahq.com/"
+                "Referer": "https://ai-stage.nabrahq.com/"
             }
             from services.progress_service import progress_service
             await progress_service.start_job(job_id, callback_url_val)
@@ -329,8 +335,9 @@ async def embed_file(
                 semester=semester_val,
                 is_course_book=is_course_book_val,
                 uploaded_by_id=uploaded_by_id_val,
-                download_url=download_url,
-                headers=headers
+                download_url=resolved_download_url,
+                headers=headers,
+                bunny_library_id=bunny_library_id_val,
             )
         else:
             # Save the file synchronously to disk before returning, to prevent FastAPI

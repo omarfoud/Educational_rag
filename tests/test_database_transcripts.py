@@ -1,5 +1,6 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+import pytest
 
 from models.db_models import Base, Files, Transcripts, VideoTimestamps
 from services.database_service import DatabaseService, EXPECTED_SCHEMA
@@ -114,3 +115,86 @@ def test_document_pipeline_does_not_hide_transcript_database_failures():
     finally:
         module.database_service = original_database
         module.settings.save_transcript_files = original_file_setting
+
+
+def test_bunny_cdn_url_signing_uses_advanced_token_auth(monkeypatch):
+    import base64
+    import hashlib
+    import hmac
+    import importlib
+
+    module = importlib.import_module("services.document_processing_service")
+    monkeypatch.setattr(module.settings, "bunny_cdn_token_key", "secret")
+    monkeypatch.setattr(module.settings, "bunny_cdn_token_expiration_seconds", 3600)
+    monkeypatch.setattr(module.time, "time", lambda: 1000)
+
+    processor = module.DocumentProcessingService.__new__(
+        module.DocumentProcessingService
+    )
+    signed_url = processor._sign_bunny_cdn_url(
+        "https://vz.example.b-cdn.net/video-id/play_720p.mp4"
+    )
+
+    digest = hmac.new(
+        b"secret",
+        b"/video-id/play_720p.mp44600",
+        hashlib.sha256,
+    ).digest()
+    token = "HS256-" + base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+    assert signed_url == (
+        "https://vz.example.b-cdn.net/video-id/play_720p.mp4"
+        f"?token={token}&expires=4600"
+    )
+
+
+@pytest.mark.asyncio
+async def test_bunny_stream_video_id_resolves_from_metadata(monkeypatch):
+    import httpx
+    import importlib
+
+    module = importlib.import_module("services.document_processing_service")
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "title": "GIS lesson",
+                "thumbnailUrl": "https://vz-51ee5657-212.b-cdn.net/video-id/thumbnail.jpg",
+                "availableResolutions": "360p,480p,720p",
+                "hasMP4Fallback": True,
+            }
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return None
+
+        async def get(self, url, headers=None):
+            assert url == "https://video.bunnycdn.com/library/686485/videos/video-id"
+            assert headers == {"AccessKey": "stage-key"}
+            return FakeResponse()
+
+    monkeypatch.setattr(httpx, "AsyncClient", FakeClient)
+    monkeypatch.setattr(module.settings, "bunny_access_key", "stage-key")
+    monkeypatch.setattr(module.settings, "bunny_stream_library_id", "686485")
+    monkeypatch.setattr(module.settings, "bunny_stream_cdn_hostname", "")
+    monkeypatch.setattr(module.settings, "bunny_cdn_token_key", "")
+
+    processor = module.DocumentProcessingService.__new__(
+        module.DocumentProcessingService
+    )
+    url, headers, title = await processor._resolve_bunny_stream_download(
+        video_id="video-id",
+        explicit_url="https://legacy/original",
+        headers={},
+    )
+
+    assert url == "https://vz-51ee5657-212.b-cdn.net/video-id/play_720p.mp4"
+    assert headers["AccessKey"] == "stage-key"
+    assert title == "GIS lesson.mp4"
