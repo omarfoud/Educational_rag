@@ -96,6 +96,7 @@ def _database_runtime_info() -> dict:
         return {
             "driver": db_url.drivername,
             "host": db_url.host or "local",
+            "port": db_url.port,
             "database": db_url.database,
             "configured": bool(settings.database_url),
             "isDefaultSqlite": settings.database_url == "sqlite:///./data/app.db",
