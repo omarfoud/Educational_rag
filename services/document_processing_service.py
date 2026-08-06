@@ -649,9 +649,10 @@ class DocumentProcessingService:
             if item.strip()
         ]
         preferred_resolution = resolutions[-1] if resolutions else "720p"
-        stream_url = f"https://{cdn_host}/{video_id}/play_{preferred_resolution}.mp4"
-        if not metadata.get("hasMP4Fallback", True):
+        if metadata.get("hasOriginal"):
             stream_url = f"https://{cdn_host}/{video_id}/original"
+        else:
+            stream_url = f"https://{cdn_host}/{video_id}/play_{preferred_resolution}.mp4"
         stream_url = self._sign_bunny_cdn_url(stream_url)
 
         resolved_headers = dict(headers or {})

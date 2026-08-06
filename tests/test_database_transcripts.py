@@ -163,6 +163,7 @@ async def test_bunny_stream_video_id_resolves_from_metadata(monkeypatch):
                 "thumbnailUrl": "https://vz-51ee5657-212.b-cdn.net/video-id/thumbnail.jpg",
                 "availableResolutions": "360p,480p,720p",
                 "hasMP4Fallback": True,
+                "hasOriginal": False,
             }
 
     class FakeClient:
@@ -198,3 +199,53 @@ async def test_bunny_stream_video_id_resolves_from_metadata(monkeypatch):
     assert url == "https://vz-51ee5657-212.b-cdn.net/video-id/play_720p.mp4"
     assert headers["AccessKey"] == "stage-key"
     assert title == "GIS lesson.mp4"
+
+
+@pytest.mark.asyncio
+async def test_bunny_stream_video_id_prefers_original_when_available(monkeypatch):
+    import httpx
+    import importlib
+
+    module = importlib.import_module("services.document_processing_service")
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "title": "Original lesson",
+                "thumbnailUrl": "https://vz-51ee5657-212.b-cdn.net/video-id/thumbnail.jpg",
+                "availableResolutions": "360p,480p,720p",
+                "hasMP4Fallback": True,
+                "hasOriginal": True,
+            }
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return None
+
+        async def get(self, url, headers=None):
+            return FakeResponse()
+
+    monkeypatch.setattr(httpx, "AsyncClient", FakeClient)
+    monkeypatch.setattr(module.settings, "bunny_access_key", "stage-key")
+    monkeypatch.setattr(module.settings, "bunny_stream_library_id", "686485")
+    monkeypatch.setattr(module.settings, "bunny_stream_cdn_hostname", "")
+    monkeypatch.setattr(module.settings, "bunny_cdn_token_key", "")
+
+    processor = module.DocumentProcessingService.__new__(
+        module.DocumentProcessingService
+    )
+    url, _, _ = await processor._resolve_bunny_stream_download(
+        video_id="video-id",
+        explicit_url="https://legacy/original",
+        headers={},
+    )
+
+    assert url == "https://vz-51ee5657-212.b-cdn.net/video-id/original"
