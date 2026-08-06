@@ -110,9 +110,9 @@ async def lifespan(app: FastAPI):
     logger.info(f"Vector DB: {settings.vector_db_path}")
     logger.info(f"Upload Path: {settings.upload_path}")
     if os.getenv("RAILWAY_ENVIRONMENT") and settings.database_url == "sqlite:///./data/app.db":
-        raise RuntimeError(
+        logger.critical(
             "DATABASE_URL is not configured for Railway. "
-            "Refusing to use local SQLite because transcripts will not appear in Railway PostgreSQL."
+            "The service will use local SQLite, so transcripts will not appear in Railway PostgreSQL."
         )
     try:
         database_service.init_db()
