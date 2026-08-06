@@ -12,8 +12,6 @@ import uuid
 from collections import Counter
 from typing import Any
 
-from PIL import Image
-
 from services.database_service import database_service
 
 
@@ -140,7 +138,7 @@ class ProctoringService:
             }]
         return []
 
-    def _events_from_image(self, image: Image.Image) -> list[dict[str, Any]]:
+    def _events_from_image(self, image) -> list[dict[str, Any]]:
         cv2, cascade = self._get_cv2()
         if cv2 is None or cascade is None:
             return []
@@ -156,9 +154,11 @@ class ProctoringService:
             return [{"eventType": "multi_face", "confidence": 0.9, "details": {"faceCount": count}}]
         return []
 
-    def _decode_image(self, image_data: Any) -> Image.Image | None:
+    def _decode_image(self, image_data: Any):
         if not image_data:
             return None
+        from PIL import Image
+
         if isinstance(image_data, str):
             payload = image_data.split(",", 1)[1] if "," in image_data else image_data
             raw = base64.b64decode(payload)
