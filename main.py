@@ -104,6 +104,15 @@ def _database_runtime_info() -> dict:
         return {"configured": False, "error": str(exc)}
 
 
+def _ensure_file_row_for_backfill(file_id: str, file_type: str = "video") -> None:
+    if not database_service.file_exists(file_id):
+        database_service.save_file_info(
+            file_id=file_id,
+            original_name=file_id,
+            file_type=file_type,
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting AI/RAG Backend Server...")
@@ -575,6 +584,19 @@ async def get_chunks_for_transcript(file_id: str):
     chunks = embedding_service.get_all_chunks_for_file(file_id)
     if not chunks:
         raise HTTPException(status_code=404, detail=f"No chunks found for file_id: {file_id}")
+    if settings.save_chunks_to_postgres and not database_service.file_has_chunks(file_id):
+        try:
+            _ensure_file_row_for_backfill(file_id)
+            database_service.save_chunks(
+                file_id=file_id,
+                chunks=[chunk.get("text", "") for chunk in chunks],
+                embeddings=[],
+                model_name=settings.openai_embedding_model if settings.embedding_provider == "openai" else settings.embedding_model,
+                metadatas=[chunk.get("metadata") or {} for chunk in chunks],
+                start_idx=0,
+            )
+        except Exception as e:
+            logger.warning("Could not backfill chunks to PostgreSQL for %s: %s", file_id, e)
     return chunks
 
 
@@ -586,7 +608,19 @@ async def get_transcript_raw(file_id: str):
             for filename in os.listdir(transcript_path):
                 if filename.startswith(file_id) and filename.endswith(".json"):
                     with open(os.path.join(transcript_path, filename), "r", encoding="utf-8") as f:
-                        return json.load(f)
+                        transcript = json.load(f)
+                    if not database_service.get_transcript_raw(file_id):
+                        try:
+                            _ensure_file_row_for_backfill(file_id)
+                            database_service.save_transcript(
+                                file_id=file_id,
+                                full_text=transcript.get("text", ""),
+                                language=transcript.get("language", "unknown"),
+                                segments=transcript.get("segments") or [],
+                            )
+                        except Exception as e:
+                            logger.warning("Could not backfill transcript to PostgreSQL for %s: %s", file_id, e)
+                    return transcript
         except FileNotFoundError:
             pass
     db_transcript = database_service.get_transcript_raw(file_id)
