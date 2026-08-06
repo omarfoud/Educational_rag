@@ -585,7 +585,7 @@ async def get_chunks_for_transcript(file_id: str):
     chunks = embedding_service.get_all_chunks_for_file(file_id)
     if not chunks:
         raise HTTPException(status_code=404, detail=f"No chunks found for file_id: {file_id}")
-    if settings.save_chunks_to_postgres and not database_service.file_has_chunks(file_id):
+    if not database_service.file_has_chunks(file_id):
         try:
             _ensure_file_row_for_backfill(file_id)
             database_service.save_chunks(

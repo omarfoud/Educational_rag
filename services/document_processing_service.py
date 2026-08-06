@@ -482,15 +482,14 @@ class DocumentProcessingService:
             if not added_ids:
                 raise ValueError("No embeddings were generated for this batch")
 
-            if settings.save_chunks_to_postgres:
-                database_service.save_chunks(
-                    file_id=file_id,
-                    chunks=batch_texts,
-                    embeddings=[],
-                    model_name=settings.openai_embedding_model if settings.embedding_provider == "openai" else settings.embedding_model,
-                    metadatas=batch_metadatas,
-                    start_idx=i,
-                )
+            database_service.save_chunks(
+                file_id=file_id,
+                chunks=batch_texts,
+                embeddings=[],
+                model_name=settings.openai_embedding_model if settings.embedding_provider == "openai" else settings.embedding_model,
+                metadatas=batch_metadatas,
+                start_idx=i,
+            )
         
         # Indexing complete
         await self.progress_service.update(
