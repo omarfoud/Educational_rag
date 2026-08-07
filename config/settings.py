@@ -96,8 +96,8 @@ class Settings(BaseSettings):
     callback_timeout: int = 15
 
     # Bunny CDN
-    bunny_access_key: str = "f4bcd605-1bac-4879-96cbb58907f3-6d4a-44b3"
-    bunny_stream_library_id: str = "686485"
+    bunny_access_key: str = ""
+    bunny_stream_library_id: str = ""
     bunny_stream_cdn_hostname: str = ""
     bunny_cdn_token_key: str = ""
     bunny_cdn_token_expiration_seconds: int = 21600
