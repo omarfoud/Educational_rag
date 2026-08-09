@@ -277,6 +277,8 @@ async def embed_file(
     semester: Optional[str] = Form(None),
     isCourseBook: bool = Form(False),
     uploadedById: Optional[str] = Form(None),
+    downloadUrl: Optional[str] = Form(None),
+    bunnyLibraryId: Optional[str] = Form(None),
 ):
     """Embed a document or video file for later RAG use."""
     try:

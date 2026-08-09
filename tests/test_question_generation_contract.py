@@ -202,6 +202,32 @@ def test_generate_questions_resolves_lesson_video_id(monkeypatch):
     assert captured["context"][0]["metadata"]["file_id"] == "gis-video-id"
 
 
+def test_generate_questions_falls_back_to_general_context_when_no_content():
+    service = QuestionService()
+    captured = {}
+
+    async def fake_retrieve_with_metadata(query, top_k=5, metadata_filter=None, min_score=0.0):
+        return []
+
+    async def fake_generate_structured_output(prompt, context, output_schema, system_instruction=None):
+        captured["context"] = context
+        captured["system_instruction"] = system_instruction
+        return []
+
+    service.rag = _FakeRag([])
+    service.rag.retrieve_with_metadata = fake_retrieve_with_metadata
+    service.rag.generate_structured_output = fake_generate_structured_output
+
+    asyncio.run(
+        service.generate_questions(
+            GenerateQuestionsRequest(metadata={"subject": "Physics"}, questionsNumber=1)
+        )
+    )
+
+    assert captured["context"][0]["metadata"]["source"] == "general_fallback"
+    assert "No embedded teacher content was found" in captured["system_instruction"]
+
+
 def test_context_language_overrides_arabic_focus_for_english_video():
     service = QuestionService()
     context = [{"text": "Data augmentation creates realistic examples.", "metadata": {"language": "en"}}]
@@ -272,6 +298,29 @@ def test_quiz_resolves_lesson_video_id_before_retrieval(monkeypatch):
 
     assert captured["file_id"] == "gis-video-id"
     assert captured["context"][0]["metadata"]["file_id"] == "gis-video-id"
+
+
+def test_generate_quiz_falls_back_to_general_context_when_no_content():
+    service = QuestionService()
+    captured = {}
+
+    async def fake_get_context(request):
+        return []
+
+    async def fake_structured(prompt, schema, system_instruction="", context=None):
+        captured["context"] = context
+        captured["prompt"] = prompt
+        captured["system_instruction"] = system_instruction
+        return []
+
+    service._get_quiz_context = fake_get_context
+    service._structured = fake_structured
+
+    asyncio.run(service.generate_quiz(GenerateQuizRequest(subject="Physics", numberOfQuestions=1)))
+
+    assert captured["context"][0]["metadata"]["source"] == "general_fallback"
+    assert "No embedded teacher content was found" in captured["prompt"]
+    assert "general educational MCQ quizzes" in captured["system_instruction"]
 
 
 def test_quiz_context_search_uses_focus_instructions():
