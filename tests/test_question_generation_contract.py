@@ -27,6 +27,41 @@ def test_question_output_contract_uses_hard_not_difficult():
     assert schema["items"]["difficulty"] == "easy|medium|hard"
 
 
+def test_question_parser_keeps_question_order_when_normalizing_options():
+    service = QuestionService()
+    questions = service._parse_questions(
+        [
+            {
+                "id": "q1",
+                "question": "Question one?",
+                "type": "mcq",
+                "options": [
+                    {"id": "a", "label": "A", "isCorrect": True},
+                    {"id": "b", "label": "B", "isCorrect": False},
+                    {"id": "c", "label": "C", "isCorrect": False},
+                    {"id": "d", "label": "D", "isCorrect": False},
+                ],
+                "difficulty": "medium",
+            },
+            {
+                "id": "q2",
+                "question": "Question two?",
+                "type": "mcq",
+                "options": [
+                    {"id": "a", "label": "A", "isCorrect": False},
+                    {"id": "b", "label": "B", "isCorrect": True},
+                    {"id": "c", "label": "C", "isCorrect": False},
+                    {"id": "d", "label": "D", "isCorrect": False},
+                ],
+                "difficulty": "medium",
+            },
+        ],
+        GenerateQuestionsRequest(questionsNumber=2),
+    )
+
+    assert [question.order for question in questions] == [1, 2]
+
+
 def test_quiz_uses_english_for_english_subject_even_when_label_is_arabic():
     service = QuestionService()
     captured = {}

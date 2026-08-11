@@ -451,12 +451,12 @@ Return JSON only."""
 
                     normalized_options = []
 
-                    for idx, opt in enumerate(options[:4], start=1):
+                    for option_index, opt in enumerate(options[:4], start=1):
                         normalized_options.append(
                             QuestionOption(
-                                id=f"o{idx}",
+                                id=f"o{option_index}",
                                 label=opt.label,
-                                isCorrect=(idx - 1 == correct_index)
+                                isCorrect=(option_index - 1 == correct_index)
                             )
                         )
 
