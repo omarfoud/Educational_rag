@@ -472,6 +472,7 @@ class DatabaseService:
         course_name: str | None = None,
         module_name: str | None = None,
         uploaded_by_id: str | None = None,
+        require_content: bool = True,
     ) -> str | None:
         if not course_name and not module_name:
             return None
@@ -492,6 +493,15 @@ class DatabaseService:
                     join_files = 'JOIN "Files" f ON f."Id" = l."VideoId" AND f."UploadedById" = :uploaded_by_id'
                     params["uploaded_by_id"] = str(uploaded_by_id)
 
+                content_filter = ""
+                if require_content:
+                    content_filter = '''
+                          AND (
+                            EXISTS (SELECT 1 FROM "Transcripts" t WHERE t."FileId" = l."VideoId")
+                            OR EXISTS (SELECT 1 FROM "FileChunks" fc WHERE fc."FileId" = l."VideoId")
+                          )
+                    '''
+
                 row = session.execute(
                     sql_text(
                         f'''
@@ -502,10 +512,7 @@ class DatabaseService:
                         JOIN "Modules" m ON m."Id" = mi."ModuleId"
                         {join_files}
                         WHERE {' AND '.join(where_parts)}
-                          AND (
-                            EXISTS (SELECT 1 FROM "Transcripts" t WHERE t."FileId" = l."VideoId")
-                            OR EXISTS (SELECT 1 FROM "FileChunks" fc WHERE fc."FileId" = l."VideoId")
-                          )
+                          {content_filter}
                         ORDER BY mi."Order" DESC, mi."Id" DESC
                         LIMIT 1
                         '''

@@ -94,6 +94,15 @@ class QuestionService:
             search_query = self._build_search_query(request.metadata, request.prompt or "")
             metadata_filter = self._build_question_metadata_filter(request.metadata)
             file_ids = self._resolve_question_file_ids(request)
+            logger.info(
+                "Question content resolution: scope=%s moduleItemId=%s courseId=%s moduleId=%s uploadedById=%s fileIds=%s",
+                self._resolved_question_scope(request),
+                request.moduleItemId or (request.metadata.module_item_id if request.metadata else None),
+                request.courseId or (request.metadata.course_id if request.metadata else None),
+                request.moduleId or (request.metadata.module_id if request.metadata else None),
+                request.uploadedById or (request.metadata.uploaded_by_id if request.metadata else None),
+                file_ids,
+            )
             if request.metadata and file_ids and len(file_ids) == 1:
                 request.metadata.file_id = file_ids[0]
 
@@ -183,6 +192,29 @@ class QuestionService:
             require_content=False,
         )
 
+    def _text_requests_specific_scope(self, explicit_scope: Optional[str], *values: Optional[str]) -> bool:
+        if explicit_scope:
+            return True
+        text = " ".join(str(v or "") for v in values).lower()
+        terms = (
+            "lesson", "lecture", "last lesson", "latest lesson", "module", "unit", "chapter",
+            "whole course", "full course", "entire course", "all course",
+            "الدرس", "المحاضرة", "اخر درس", "آخر درس", "الوحدة", "الموديول", "الفصل", "الباب",
+            "كل الكورس", "الكورس كله", "كورس كامل",
+        )
+        return any(term in text for term in terms)
+
+    def _resolved_question_scope(self, request: GenerateQuestionsRequest) -> str:
+        metadata = request.metadata
+        return self._normalize_content_scope(
+            metadata.content_scope if metadata else request.contentScope,
+            request.prompt,
+            metadata.course if metadata else None,
+            metadata.module if metadata else None,
+            metadata.title if metadata else None,
+            metadata.description if metadata else None,
+        )
+
     def _normalize_content_scope(self, explicit_scope: Optional[str], *values: Optional[str]) -> str:
         raw_scope = str(explicit_scope or "").strip().lower()
         if raw_scope in {"lesson", "latest", "module", "unit", "chapter", "course"}:
@@ -248,6 +280,7 @@ class QuestionService:
                 course_name=metadata.course,
                 module_name=metadata.module,
                 uploaded_by_id=uploaded_by_id,
+                require_content=False,
             )
             file_ids = [named_file_id] if named_file_id else []
         if not file_ids and uploaded_by_id:
@@ -289,6 +322,7 @@ class QuestionService:
                 course_name=request.course,
                 module_name=request.module or request.chapter,
                 uploaded_by_id=request.uploadedById,
+                require_content=False,
             )
             file_ids = [named_file_id] if named_file_id else []
         if not file_ids and request.uploadedById:
@@ -300,6 +334,12 @@ class QuestionService:
         metadata = request.metadata
         if not metadata:
             return bool(file_ids)
+        explicit_scope_requested = self._text_requests_specific_scope(
+            metadata.content_scope or request.contentScope,
+            request.prompt,
+            metadata.title,
+            metadata.description,
+        )
         return bool(
             file_ids
             or metadata.file_id
@@ -309,6 +349,8 @@ class QuestionService:
             or metadata.uploaded_by_id
             or request.uploadedById
             or metadata.content_scope
+            or request.contentScope
+            or (explicit_scope_requested and (metadata.course or metadata.module))
         )
 
     def _quiz_requires_resolved_content(self, request: GenerateQuizRequest, file_ids: List[str]) -> bool:
