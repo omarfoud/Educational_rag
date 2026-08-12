@@ -336,8 +336,32 @@ class QuestionService:
                 metadata_filter=current_filter,
             )
             selected = self._select_question_context(all_context, has_specific_file=True)
-            context.extend(selected or self._get_transcript_context(file_id))
+            context.extend(selected or self._get_database_chunk_context(file_id) or self._get_transcript_context(file_id))
         return context[:12]
+
+    def _get_database_chunk_context(self, file_id: Optional[str]) -> List[Dict[str, Any]]:
+        if not file_id:
+            return []
+        try:
+            chunks = database_service.get_filtered_chunks({"file_id": str(file_id)}, limit=12)
+        except Exception as e:
+            logger.warning("Could not fetch PostgreSQL chunks for %s: %s", file_id, e)
+            return []
+
+        context = []
+        for chunk in chunks[:12]:
+            text = (chunk.get("text") or "").strip()
+            if not text:
+                continue
+            metadata = dict(chunk.get("metadata") or {})
+            metadata.setdefault("file_id", str(file_id))
+            metadata.setdefault("source", "postgres_chunks")
+            context.append({
+                "text": text,
+                "score": 1.0,
+                "metadata": metadata,
+            })
+        return context
 
     async def _retrieve_embedded_content_context(
         self,

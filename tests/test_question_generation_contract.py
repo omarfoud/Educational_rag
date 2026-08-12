@@ -287,6 +287,38 @@ def test_generate_questions_accepts_pascal_case_payload_and_top_level_module_ite
     assert "اخر درس" in captured["query"]
 
 
+def test_generate_questions_uses_postgres_chunks_when_vector_search_misses(monkeypatch):
+    service = QuestionService()
+    captured = {}
+
+    monkeypatch.setattr(question_service_module.database_service, "get_lesson_video_file_id", lambda item_id: "lesson-video-id")
+    monkeypatch.setattr(
+        question_service_module.database_service,
+        "get_filtered_chunks",
+        lambda filters, limit=12: [{"text": "GIS lesson chunk from PostgreSQL", "metadata": {"file_id": filters["file_id"], "language": "en"}}],
+    )
+
+    async def fake_retrieve_with_metadata(query, top_k=5, metadata_filter=None, min_score=0.0):
+        return []
+
+    async def fake_generate_structured_output(prompt, context, output_schema, system_instruction=None):
+        captured["context"] = context
+        return []
+
+    service.rag = _FakeRag([])
+    service.rag.retrieve_with_metadata = fake_retrieve_with_metadata
+    service.rag.generate_structured_output = fake_generate_structured_output
+
+    asyncio.run(
+        service.generate_questions(
+            GenerateQuestionsRequest(metadata={"subject": "Physics", "moduleItemId": 8}, questionsNumber=1)
+        )
+    )
+
+    assert captured["context"][0]["text"] == "GIS lesson chunk from PostgreSQL"
+    assert captured["context"][0]["metadata"]["source"] == "postgres_chunks"
+
+
 def test_generate_questions_resolves_latest_teacher_video_when_no_file_id(monkeypatch):
     service = QuestionService()
     captured = {}
