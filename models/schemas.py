@@ -105,6 +105,36 @@ class GenerateQuestionsRequest(BaseModel):
         validation_alias=AliasChoices("contentScope", "ContentScope", "content_scope", "scope", "Scope", "questionScope"),
     )
 
+    @model_validator(mode="before")
+    @classmethod
+    def copy_top_level_scope_into_metadata(cls, data):
+        if not isinstance(data, dict):
+            return data
+        metadata = data.get("metadata") or data.get("Metadata") or {}
+        if not isinstance(metadata, dict):
+            return data
+        metadata = dict(metadata)
+        mappings = {
+            "moduleItemId": ("moduleItemId", "ModuleItemId", "module_item_id", "itemId", "ItemId", "lessonId", "LessonId"),
+            "courseId": ("courseId", "CourseId", "course_id"),
+            "moduleId": ("moduleId", "ModuleId", "module_id"),
+            "contentScope": ("contentScope", "ContentScope", "content_scope", "scope", "Scope", "questionScope"),
+            "uploadedById": ("uploadedById", "UploadedById", "uploaded_by_id", "teacherId", "TeacherId", "teacher_id", "userId", "UserId", "user_id"),
+        }
+        for metadata_key, aliases in mappings.items():
+            if any(alias in metadata for alias in aliases):
+                continue
+            for alias in aliases:
+                if alias in data and data.get(alias) not in (None, ""):
+                    metadata[metadata_key] = data.get(alias)
+                    break
+        data = dict(data)
+        if "Metadata" in data and "metadata" not in data:
+            data["Metadata"] = metadata
+        else:
+            data["metadata"] = metadata
+        return data
+
     @field_validator("difficulty", mode="before")
     @classmethod
     def normalize_difficulty(cls, v):
