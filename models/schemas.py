@@ -42,6 +42,10 @@ class QuestionMetadata(BaseModel):
     semester: Optional[str] = None
     is_course_book: bool = Field(default=False, validation_alias=AliasChoices("is_course_book", "isCourseBook"))
     file_id: Optional[str] = Field(default=None, validation_alias=AliasChoices("file_id", "fileId", "videoId"))
+    uploaded_by_id: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("uploaded_by_id", "uploadedById", "teacherId", "teacher_id", "userId", "user_id"),
+    )
     module_item_id: Optional[int] = Field(
         default=None,
         validation_alias=AliasChoices("module_item_id", "moduleItemId", "itemId", "lessonId"),
@@ -80,6 +84,10 @@ class GenerateQuestionsRequest(BaseModel):
     difficulty: DifficultyLevel = Field(default=DifficultyLevel.MIX)
     type: QuestionType = Field(default=QuestionType.MCQ)
     language: Optional[str] = Field(default=None, validation_alias=AliasChoices("language", "outputLanguage", "lang"))
+    uploadedById: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("uploadedById", "uploaded_by_id", "teacherId", "teacher_id", "userId", "user_id"),
+    )
 
     @field_validator("difficulty", mode="before")
     @classmethod
@@ -312,6 +320,10 @@ class GenerateQuizRequest(BaseModel):
     title: Optional[str] = ""
     description: Optional[str] = ""
     fileId: Optional[str] = Field(default=None, validation_alias=AliasChoices("fileId", "file_id", "videoId"))
+    uploadedById: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("uploadedById", "uploaded_by_id", "teacherId", "teacher_id", "userId", "user_id"),
+    )
     moduleItemId: Optional[int] = Field(
         default=None,
         validation_alias=AliasChoices("moduleItemId", "module_item_id", "itemId", "lessonId"),

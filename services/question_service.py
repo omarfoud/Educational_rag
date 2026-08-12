@@ -92,6 +92,10 @@ class QuestionService:
         try:
             if request.metadata and not request.metadata.file_id:
                 request.metadata.file_id = self._resolve_lesson_file_id(request.metadata.module_item_id)
+            if request.metadata and not request.metadata.file_id:
+                request.metadata.file_id = self._resolve_latest_teacher_video_id(
+                    request.metadata.uploaded_by_id or request.uploadedById
+                )
 
             search_query = self._build_search_query(request.metadata, request.prompt or "")
             metadata_filter = {}
@@ -117,10 +121,8 @@ class QuestionService:
             if not context and request.metadata and request.metadata.file_id:
                 context = self._get_transcript_context(request.metadata.file_id)
             if not context:
-                raise ValueError(
-                    "No embedded teacher content found for this request. "
-                    "Process the lesson/video into embeddings first, then generate questions."
-                )
+                context = self._build_general_questions_context(request)
+                logger.info("Generating general questions without embedded teacher content")
 
             metadata = request.metadata
             is_arabic = self._is_arabic_from_request_language(request.language)
@@ -135,7 +137,11 @@ class QuestionService:
                     request.prompt,
                     search_query,
                 )
-            system_instruction = self._build_system_instruction(request, is_arabic)
+            system_instruction = self._build_system_instruction(
+                request,
+                is_arabic,
+                has_teacher_context=self._has_teacher_context(context),
+            )
             generation_prompt = self._build_generation_prompt(request, is_arabic)
 
             raw_questions = await self.rag.generate_structured_output(
@@ -158,6 +164,12 @@ class QuestionService:
 
     def _resolve_lesson_file_id(self, module_item_id: Optional[int]) -> Optional[str]:
         return database_service.get_lesson_video_file_id(module_item_id)
+
+    def _resolve_latest_teacher_video_id(self, uploaded_by_id: Optional[str]) -> Optional[str]:
+        return database_service.get_latest_uploaded_video_file_id(
+            uploaded_by_id,
+            require_content=False,
+        )
 
     def _select_question_context(self, retrieved_context: List[Dict[str, Any]], has_specific_file: bool = False) -> List[Dict[str, Any]]:
         if not retrieved_context:
@@ -286,18 +298,74 @@ class QuestionService:
             "لا تُخرج نصا إنجليزيا إلا إذا كان مصطلحا علميا ضروريا."
         )
 
-    def _build_system_instruction(self, request: GenerateQuestionsRequest, is_arabic: bool) -> str:
+    def _has_teacher_context(self, context: List[Dict[str, Any]]) -> bool:
+        for item in context or []:
+            metadata = item.get("metadata") or {}
+            if metadata.get("source") != "general_fallback":
+                return True
+        return False
+
+    def _build_general_questions_context(self, request: GenerateQuestionsRequest) -> List[Dict[str, Any]]:
+        metadata = request.metadata
+        parts = [
+            f"Subject: {metadata.subject if metadata else 'General'}",
+            f"Grade: {metadata.grade if metadata else 'General'}",
+            f"Course: {metadata.course if metadata else ''}",
+            f"Module: {metadata.module if metadata else ''}",
+            f"Title: {metadata.title if metadata else ''}",
+            f"Description: {metadata.description if metadata else ''}",
+            f"Teacher/focus instructions: {request.prompt or ''}",
+            (
+                "No embedded lesson transcript/content was found. "
+                "Generate a general educational question set from the provided metadata and instructions."
+            ),
+        ]
+        return [{
+            "text": "\n".join(part for part in parts if part and not part.endswith(": ")),
+            "score": 0.0,
+            "metadata": {"source": "general_fallback"},
+        }]
+
+    def _build_general_quiz_context(self, request: GenerateQuizRequest) -> List[Dict[str, Any]]:
+        parts = [
+            f"Subject: {request.subject}",
+            f"Course: {request.course or ''}",
+            f"Module: {request.module or request.chapter or ''}",
+            f"Lesson: {request.lesson or ''}",
+            f"Title: {request.title or ''}",
+            f"Description: {request.description or ''}",
+            f"Grade: {request.grade or ''}",
+            f"Teacher/focus instructions: {request.prompt or ''}",
+            (
+                "No embedded lesson transcript/content was found. "
+                "Generate a general educational quiz from the provided metadata and instructions."
+            ),
+        ]
+        return [{
+            "text": "\n".join(part for part in parts if part and not part.endswith(": ")),
+            "score": 0.0,
+            "metadata": {"source": "general_fallback"},
+        }]
+
+    def _build_system_instruction(self, request: GenerateQuestionsRequest, is_arabic: bool, has_teacher_context: bool = True) -> str:
         lang = self._language_name(is_arabic)
         grade = request.metadata.grade if request.metadata else "General"
         subject = request.metadata.subject if request.metadata else "General"
         module = request.metadata.module if request.metadata else ""
+        source_rule = (
+            "- Use only the provided teacher lesson context from retrieved embeddings as the source of truth.\n"
+            "- Do not invent questions from general knowledge when the context does not support them."
+            if has_teacher_context
+            else
+            "- No embedded teacher content was found. Generate general educational questions from the provided metadata and instructions.\n"
+            "- Do not claim the questions are based on a teacher video/transcript."
+        )
         return f"""You are an expert educational content creator specializing in {lang}.
 Generate high-quality questions based on the provided context.
 Requirements:
 - Generate in {lang}.
 - {self._language_requirements(lang)}
-- Use only the provided teacher lesson context from retrieved embeddings as the source of truth.
-- Do not invent questions from general knowledge when the context does not support them.
+{source_rule}
 - For MCQ: provide 4 options with exactly one correct answer.
 - For True/False: correctAnswer must be "true" or "false".
 - For Short Answer: correctAnswer should be a concise model answer.
@@ -393,12 +461,12 @@ Return JSON only."""
 
                     normalized_options = []
 
-                    for idx, opt in enumerate(options[:4], start=1):
+                    for option_index, opt in enumerate(options[:4], start=1):
                         normalized_options.append(
                             QuestionOption(
-                                id=f"o{idx}",
+                                id=f"o{option_index}",
                                 label=opt.label,
-                                isCorrect=(idx - 1 == correct_index)
+                                isCorrect=(option_index - 1 == correct_index)
                             )
                         )
 
@@ -563,13 +631,15 @@ Return JSON with: question, explanation, examples[]. Use {'Arabic' if is_ar else
     async def generate_quiz(self, request: GenerateQuizRequest) -> List[QuizQuestion]:
         if not request.fileId:
             request.fileId = self._resolve_lesson_file_id(request.moduleItemId)
+        if not request.fileId:
+            request.fileId = self._resolve_latest_teacher_video_id(request.uploadedById)
 
         context = await self._get_quiz_context(request)
+        has_teacher_context = self._has_teacher_context(context)
         if not context:
-            raise ValueError(
-                "No embedded teacher content found for this quiz request. "
-                "Process the lesson/video into embeddings first, then generate the quiz."
-            )
+            context = self._build_general_quiz_context(request)
+            has_teacher_context = False
+            logger.info("Generating general quiz without embedded teacher content")
 
         is_ar = self._is_arabic_from_request_language(request.language)
         if is_ar is None:
@@ -599,15 +669,21 @@ Grade/Level: {request.grade or ''}
 Difficulty: {request.difficulty.value}
 Use {language}.
 {self._language_requirements(language)}
-Use only the provided teacher lesson context from retrieved embeddings as the source of truth.
-Prioritize the focus/instructions when selecting concepts, but only if the provided context supports them.
-Do not invent quiz questions from general knowledge when the context does not support them.
+{self._quiz_source_rules(has_teacher_context)}
 Each question must have 4 options and exactly one correct option.
 Return JSON array only."""
         schema = {"type":"array","items":{"question":"string","options":[{"text":"string","isCorrect":"boolean"}],"explanation":"string","type":"mcq"}}
-        system_instruction = f"You generate MCQ quizzes in {language} from the provided teacher lesson context. Return JSON only."
+        system_instruction = (
+            f"You generate MCQ quizzes in {language} from the provided teacher lesson context. Return JSON only."
+            if has_teacher_context
+            else f"You generate general educational MCQ quizzes in {language} from the provided metadata and instructions. Return JSON only."
+        )
         if request.grade:
-            system_instruction = f"You generate educational MCQ quizzes in {language}, appropriate for the {request.grade} level, from the provided teacher lesson context. Return JSON only."
+            system_instruction = (
+                f"You generate educational MCQ quizzes in {language}, appropriate for the {request.grade} level, from the provided teacher lesson context. Return JSON only."
+                if has_teacher_context
+                else f"You generate general educational MCQ quizzes in {language}, appropriate for the {request.grade} level, from the provided metadata and instructions. Return JSON only."
+            )
         raw = await self._structured(prompt, schema, system_instruction, context=context)
         raw = self._safe_json(raw, [])
         if isinstance(raw, dict):
@@ -629,6 +705,18 @@ Return JSON array only."""
             if opts and not any(o.isCorrect for o in opts): opts[0].isCorrect=True
             output.append(QuizQuestion(question=item.get("question",""), options=opts[:4], explanation=item.get("explanation",""), type="mcq"))
         return output
+
+    def _quiz_source_rules(self, has_teacher_context: bool) -> str:
+        if has_teacher_context:
+            return (
+                "Use only the provided teacher lesson context from retrieved embeddings as the source of truth.\n"
+                "Prioritize the focus/instructions when selecting concepts, but only if the provided context supports them.\n"
+                "Do not invent quiz questions from general knowledge when the context does not support them."
+            )
+        return (
+            "No embedded teacher content was found. Generate a general educational quiz from the metadata and focus/instructions.\n"
+            "Do not claim the quiz is based on a teacher video/transcript."
+        )
 
     async def _get_quiz_context(self, request: GenerateQuizRequest) -> List[Dict[str, Any]]:
         if not request.fileId:

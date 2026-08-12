@@ -27,6 +27,41 @@ def test_question_output_contract_uses_hard_not_difficult():
     assert schema["items"]["difficulty"] == "easy|medium|hard"
 
 
+def test_question_parser_keeps_question_order_when_normalizing_options():
+    service = QuestionService()
+    questions = service._parse_questions(
+        [
+            {
+                "id": "q1",
+                "question": "Question one?",
+                "type": "mcq",
+                "options": [
+                    {"id": "a", "label": "A", "isCorrect": True},
+                    {"id": "b", "label": "B", "isCorrect": False},
+                    {"id": "c", "label": "C", "isCorrect": False},
+                    {"id": "d", "label": "D", "isCorrect": False},
+                ],
+                "difficulty": "medium",
+            },
+            {
+                "id": "q2",
+                "question": "Question two?",
+                "type": "mcq",
+                "options": [
+                    {"id": "a", "label": "A", "isCorrect": False},
+                    {"id": "b", "label": "B", "isCorrect": True},
+                    {"id": "c", "label": "C", "isCorrect": False},
+                    {"id": "d", "label": "D", "isCorrect": False},
+                ],
+                "difficulty": "medium",
+            },
+        ],
+        GenerateQuestionsRequest(questionsNumber=2),
+    )
+
+    assert [question.order for question in questions] == [1, 2]
+
+
 def test_quiz_uses_english_for_english_subject_even_when_label_is_arabic():
     service = QuestionService()
     captured = {}
@@ -161,6 +196,12 @@ def test_question_metadata_accepts_frontend_file_aliases():
     assert GenerateQuestionsRequest(metadata={"videoId": "lesson-video-2"}).metadata.file_id == "lesson-video-2"
 
 
+def test_question_metadata_accepts_teacher_aliases():
+    assert GenerateQuestionsRequest(metadata={"uploadedById": "teacher-1"}).metadata.uploaded_by_id == "teacher-1"
+    assert GenerateQuestionsRequest(teacherId="teacher-2").uploadedById == "teacher-2"
+    assert GenerateQuizRequest(subject="Science", userId="teacher-3").uploadedById == "teacher-3"
+
+
 def test_question_context_requires_retrieved_teacher_content():
     service = QuestionService()
 
@@ -200,6 +241,64 @@ def test_generate_questions_resolves_lesson_video_id(monkeypatch):
 
     assert captured["metadata_filter"]["file_id"] == "gis-video-id"
     assert captured["context"][0]["metadata"]["file_id"] == "gis-video-id"
+
+
+def test_generate_questions_resolves_latest_teacher_video_when_no_file_id(monkeypatch):
+    service = QuestionService()
+    captured = {}
+
+    monkeypatch.setattr(question_service_module.database_service, "get_lesson_video_file_id", lambda item_id: None)
+    def fake_latest_video(user_id, require_content=True):
+        assert require_content is False
+        return "latest-video-id"
+
+    monkeypatch.setattr(question_service_module.database_service, "get_latest_uploaded_video_file_id", fake_latest_video)
+
+    async def fake_retrieve_with_metadata(query, top_k=5, metadata_filter=None, min_score=0.0):
+        captured["metadata_filter"] = metadata_filter
+        return [{"text": "latest teacher video content", "score": 1.0, "metadata": {"file_id": "latest-video-id", "language": "en"}}]
+
+    async def fake_generate_structured_output(prompt, context, output_schema, system_instruction=None):
+        captured["context"] = context
+        return []
+
+    service.rag = _FakeRag([])
+    service.rag.retrieve_with_metadata = fake_retrieve_with_metadata
+    service.rag.generate_structured_output = fake_generate_structured_output
+
+    asyncio.run(
+        service.generate_questions(
+            GenerateQuestionsRequest(metadata={"subject": "Physics", "uploadedById": "teacher-1"}, questionsNumber=1)
+        )
+    )
+
+    assert captured["metadata_filter"]["file_id"] == "latest-video-id"
+
+
+def test_generate_questions_falls_back_to_general_context_when_no_content():
+    service = QuestionService()
+    captured = {}
+
+    async def fake_retrieve_with_metadata(query, top_k=5, metadata_filter=None, min_score=0.0):
+        return []
+
+    async def fake_generate_structured_output(prompt, context, output_schema, system_instruction=None):
+        captured["context"] = context
+        captured["system_instruction"] = system_instruction
+        return []
+
+    service.rag = _FakeRag([])
+    service.rag.retrieve_with_metadata = fake_retrieve_with_metadata
+    service.rag.generate_structured_output = fake_generate_structured_output
+
+    asyncio.run(
+        service.generate_questions(
+            GenerateQuestionsRequest(metadata={"subject": "Physics"}, questionsNumber=1)
+        )
+    )
+
+    assert captured["context"][0]["metadata"]["source"] == "general_fallback"
+    assert "No embedded teacher content was found" in captured["system_instruction"]
 
 
 def test_context_language_overrides_arabic_focus_for_english_video():
@@ -272,6 +371,56 @@ def test_quiz_resolves_lesson_video_id_before_retrieval(monkeypatch):
 
     assert captured["file_id"] == "gis-video-id"
     assert captured["context"][0]["metadata"]["file_id"] == "gis-video-id"
+
+
+def test_quiz_resolves_latest_teacher_video_before_retrieval(monkeypatch):
+    service = QuestionService()
+    captured = {}
+
+    monkeypatch.setattr(question_service_module.database_service, "get_lesson_video_file_id", lambda item_id: None)
+    def fake_latest_video(user_id, require_content=True):
+        assert require_content is False
+        return "latest-video-id"
+
+    monkeypatch.setattr(question_service_module.database_service, "get_latest_uploaded_video_file_id", fake_latest_video)
+
+    async def fake_get_context(request):
+        captured["file_id"] = request.fileId
+        return [{"text": "latest teacher video content", "score": 1.0, "metadata": {"file_id": request.fileId, "language": "en"}}]
+
+    async def fake_structured(prompt, schema, system_instruction="", context=None):
+        captured["context"] = context
+        return []
+
+    service._get_quiz_context = fake_get_context
+    service._structured = fake_structured
+
+    asyncio.run(service.generate_quiz(GenerateQuizRequest(subject="Physics", uploadedById="teacher-1")))
+
+    assert captured["file_id"] == "latest-video-id"
+
+
+def test_generate_quiz_falls_back_to_general_context_when_no_content():
+    service = QuestionService()
+    captured = {}
+
+    async def fake_get_context(request):
+        return []
+
+    async def fake_structured(prompt, schema, system_instruction="", context=None):
+        captured["context"] = context
+        captured["prompt"] = prompt
+        captured["system_instruction"] = system_instruction
+        return []
+
+    service._get_quiz_context = fake_get_context
+    service._structured = fake_structured
+
+    asyncio.run(service.generate_quiz(GenerateQuizRequest(subject="Physics", numberOfQuestions=1)))
+
+    assert captured["context"][0]["metadata"]["source"] == "general_fallback"
+    assert "No embedded teacher content was found" in captured["prompt"]
+    assert "general educational MCQ quizzes" in captured["system_instruction"]
 
 
 def test_quiz_context_search_uses_focus_instructions():
