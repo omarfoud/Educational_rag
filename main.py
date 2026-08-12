@@ -610,6 +610,20 @@ async def get_chunks_for_transcript(file_id: str):
     return chunks
 
 
+async def _video_processing_status(file_id: str):
+    return database_service.get_video_processing_status(file_id)
+
+
+@app.get("/api/files/video-status/{file_id}")
+async def get_video_status(file_id: str):
+    return await _video_processing_status(file_id)
+
+
+@app.post("/api/files/video-status/{file_id}")
+async def post_video_status(file_id: str):
+    return await _video_processing_status(file_id)
+
+
 @app.get("/api/get-transcript-raw/{file_id}")
 async def get_transcript_raw(file_id: str):
     transcript_path = getattr(settings, "transcript_path", "./data/transcripts")
