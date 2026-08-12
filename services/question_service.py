@@ -243,6 +243,13 @@ class QuestionService:
         if not file_ids and metadata.module_item_id:
             lesson_file_id = self._resolve_lesson_file_id(metadata.module_item_id)
             file_ids = [lesson_file_id] if lesson_file_id else []
+        if not file_ids and (metadata.course or metadata.module):
+            named_file_id = database_service.get_latest_video_file_id_by_course_module_names(
+                course_name=metadata.course,
+                module_name=metadata.module,
+                uploaded_by_id=uploaded_by_id,
+            )
+            file_ids = [named_file_id] if named_file_id else []
         if not file_ids and uploaded_by_id:
             latest_file_id = self._resolve_latest_teacher_video_id(uploaded_by_id)
             file_ids = [latest_file_id] if latest_file_id else []
@@ -277,6 +284,13 @@ class QuestionService:
         if not file_ids and request.moduleItemId:
             lesson_file_id = self._resolve_lesson_file_id(request.moduleItemId)
             file_ids = [lesson_file_id] if lesson_file_id else []
+        if not file_ids and (request.course or request.module or request.chapter):
+            named_file_id = database_service.get_latest_video_file_id_by_course_module_names(
+                course_name=request.course,
+                module_name=request.module or request.chapter,
+                uploaded_by_id=request.uploadedById,
+            )
+            file_ids = [named_file_id] if named_file_id else []
         if not file_ids and request.uploadedById:
             latest_file_id = self._resolve_latest_teacher_video_id(request.uploadedById)
             file_ids = [latest_file_id] if latest_file_id else []

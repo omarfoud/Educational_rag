@@ -467,6 +467,56 @@ class DatabaseService:
             logger.warning("Could not resolve scoped video ids for scope %s: %s", scope, e)
             return []
 
+    def get_latest_video_file_id_by_course_module_names(
+        self,
+        course_name: str | None = None,
+        module_name: str | None = None,
+        uploaded_by_id: str | None = None,
+    ) -> str | None:
+        if not course_name and not module_name:
+            return None
+
+        try:
+            with self.get_session() as session:
+                where_parts = ['l."VideoId" IS NOT NULL', 'l."VideoId" <> \'\'']
+                params: dict[str, object] = {}
+                if course_name:
+                    where_parts.append('c."Title" ILIKE :course_name')
+                    params["course_name"] = f"%{str(course_name).strip()}%"
+                if module_name:
+                    where_parts.append('m."Title" ILIKE :module_name')
+                    params["module_name"] = f"%{str(module_name).strip()}%"
+
+                join_files = ""
+                if uploaded_by_id:
+                    join_files = 'JOIN "Files" f ON f."Id" = l."VideoId" AND f."UploadedById" = :uploaded_by_id'
+                    params["uploaded_by_id"] = str(uploaded_by_id)
+
+                row = session.execute(
+                    sql_text(
+                        f'''
+                        SELECT l."VideoId"
+                        FROM "Lessons" l
+                        JOIN "ModuleItems" mi ON mi."Id" = l."ModuleItemId"
+                        JOIN "Courses" c ON c."Id" = mi."CourseId"
+                        JOIN "Modules" m ON m."Id" = mi."ModuleId"
+                        {join_files}
+                        WHERE {' AND '.join(where_parts)}
+                          AND (
+                            EXISTS (SELECT 1 FROM "Transcripts" t WHERE t."FileId" = l."VideoId")
+                            OR EXISTS (SELECT 1 FROM "FileChunks" fc WHERE fc."FileId" = l."VideoId")
+                          )
+                        ORDER BY mi."Order" DESC, mi."Id" DESC
+                        LIMIT 1
+                        '''
+                    ),
+                    params,
+                ).first()
+                return str(row[0]) if row and row[0] else None
+        except Exception as e:
+            logger.warning("Could not resolve latest video by course/module names: %s", e)
+            return None
+
     def get_latest_uploaded_video_file_id(self, uploaded_by_id: str | None, require_content: bool = True) -> str | None:
         """Resolve a teacher/user id to the latest uploaded video FileId."""
         if not uploaded_by_id:
