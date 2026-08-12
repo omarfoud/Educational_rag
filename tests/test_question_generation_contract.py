@@ -1,6 +1,8 @@
 import asyncio
 import importlib
 
+import pytest
+
 from models.enums import DifficultyLevel, QuestionType
 from models.schemas import FlashcardsRequest, GenerateQuestionsRequest, GenerateQuizRequest, QuestionMetadata
 from services.question_service import QuestionService
@@ -275,6 +277,32 @@ def test_generate_questions_resolves_latest_teacher_video_when_no_file_id(monkey
     assert captured["metadata_filter"]["file_id"] == "latest-video-id"
 
 
+def test_generate_questions_rejects_unprocessed_resolved_teacher_video(monkeypatch):
+    service = QuestionService()
+
+    monkeypatch.setattr(question_service_module.database_service, "get_lesson_video_file_id", lambda item_id: None)
+    monkeypatch.setattr(
+        question_service_module.database_service,
+        "get_latest_uploaded_video_file_id",
+        lambda user_id, require_content=True: "latest-unprocessed-video",
+    )
+    monkeypatch.setattr(question_service_module.database_service, "get_transcript_raw", lambda file_id: None)
+
+    async def fake_retrieve_with_metadata(query, top_k=5, metadata_filter=None, min_score=0.0):
+        return []
+
+    service.rag = _FakeRag([])
+    service.rag.retrieve_with_metadata = fake_retrieve_with_metadata
+    service._load_transcript_file = lambda file_id: None
+
+    with pytest.raises(ValueError, match="not ready"):
+        asyncio.run(
+            service.generate_questions(
+                GenerateQuestionsRequest(metadata={"subject": "Physics", "uploadedById": "teacher-1"}, questionsNumber=1)
+            )
+        )
+
+
 def test_generate_questions_uses_module_scope_video_ids(monkeypatch):
     service = QuestionService()
     seen_file_ids = []
@@ -434,6 +462,28 @@ def test_quiz_resolves_latest_teacher_video_before_retrieval(monkeypatch):
     asyncio.run(service.generate_quiz(GenerateQuizRequest(subject="Physics", uploadedById="teacher-1")))
 
     assert captured["file_id"] == "latest-video-id"
+
+
+def test_generate_quiz_rejects_unprocessed_latest_teacher_video(monkeypatch):
+    service = QuestionService()
+
+    monkeypatch.setattr(question_service_module.database_service, "get_lesson_video_file_id", lambda item_id: None)
+    monkeypatch.setattr(
+        question_service_module.database_service,
+        "get_latest_uploaded_video_file_id",
+        lambda user_id, require_content=True: "latest-unprocessed-video",
+    )
+    monkeypatch.setattr(question_service_module.database_service, "get_transcript_raw", lambda file_id: None)
+
+    async def fake_retrieve_with_metadata(query, top_k=5, metadata_filter=None, min_score=0.0):
+        return []
+
+    service.rag = _FakeRag([])
+    service.rag.retrieve_with_metadata = fake_retrieve_with_metadata
+    service._load_transcript_file = lambda file_id: None
+
+    with pytest.raises(ValueError, match="not ready"):
+        asyncio.run(service.generate_quiz(GenerateQuizRequest(subject="Physics", uploadedById="teacher-1")))
 
 
 def test_generate_quiz_falls_back_to_general_context_when_no_content():

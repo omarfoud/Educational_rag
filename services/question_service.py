@@ -97,6 +97,9 @@ class QuestionService:
                 request.metadata.file_id = file_ids[0]
 
             context = await self._retrieve_context_for_file_ids(search_query, metadata_filter, file_ids)
+            requires_resolved_content = self._question_requires_resolved_content(request, file_ids)
+            if not context and requires_resolved_content:
+                self._raise_missing_resolved_content(file_ids)
             if not context:
                 context = await self._retrieve_embedded_content_context(search_query, metadata_filter)
             if not context:
@@ -262,6 +265,44 @@ class QuestionService:
             latest_file_id = self._resolve_latest_teacher_video_id(request.uploadedById)
             file_ids = [latest_file_id] if latest_file_id else []
         return self._unique_file_ids(file_ids)
+
+    def _question_requires_resolved_content(self, request: GenerateQuestionsRequest, file_ids: List[str]) -> bool:
+        metadata = request.metadata
+        if not metadata:
+            return bool(file_ids)
+        return bool(
+            file_ids
+            or metadata.file_id
+            or metadata.module_item_id
+            or metadata.course_id
+            or metadata.module_id
+            or metadata.uploaded_by_id
+            or request.uploadedById
+            or metadata.content_scope
+        )
+
+    def _quiz_requires_resolved_content(self, request: GenerateQuizRequest, file_ids: List[str]) -> bool:
+        return bool(
+            file_ids
+            or request.fileId
+            or request.moduleItemId
+            or request.courseId
+            or request.moduleId
+            or request.uploadedById
+            or request.contentScope
+        )
+
+    def _raise_missing_resolved_content(self, file_ids: List[str]) -> None:
+        if file_ids:
+            joined = ", ".join(file_ids[:5])
+            raise ValueError(
+                f"Resolved lesson video content is not ready for fileId(s): {joined}. "
+                "Process the video transcript and embeddings first, then generate the quiz/questions."
+            )
+        raise ValueError(
+            "No lesson video/content was found for the requested lesson, module, course, or teacher. "
+            "Send a valid moduleItemId/courseId/moduleId/uploadedById or process the lesson video first."
+        )
 
     async def _retrieve_context_for_file_ids(
         self,
@@ -766,6 +807,8 @@ Return JSON with: question, explanation, examples[]. Use {'Arabic' if is_ar else
 
         context = await self._get_quiz_context(request)
         has_teacher_context = self._has_teacher_context(context)
+        if not context and self._quiz_requires_resolved_content(request, resolved_file_ids):
+            self._raise_missing_resolved_content(resolved_file_ids)
         if not context:
             context = self._build_general_quiz_context(request)
             has_teacher_context = False
