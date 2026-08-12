@@ -90,39 +90,18 @@ class QuestionService:
     # --------------------------- questions ---------------------------
     async def generate_questions(self, request: GenerateQuestionsRequest) -> List[GeneratedQuestion]:
         try:
-            if request.metadata and not request.metadata.file_id:
-                request.metadata.file_id = self._resolve_lesson_file_id(request.metadata.module_item_id)
-            if request.metadata and not request.metadata.file_id:
-                request.metadata.file_id = self._resolve_latest_teacher_video_id(
-                    request.metadata.uploaded_by_id or request.uploadedById
-                )
-
             search_query = self._build_search_query(request.metadata, request.prompt or "")
-            metadata_filter = {}
-            if request.metadata:
-                if request.metadata.subject and request.metadata.subject != "General":
-                    metadata_filter["subject"] = request.metadata.subject
-                if request.metadata.grade and request.metadata.grade != "General":
-                    metadata_filter["grade_level"] = request.metadata.grade
-                if request.metadata.semester:
-                    metadata_filter["semester"] = request.metadata.semester
-                if request.metadata.is_course_book:
-                    metadata_filter["is_course_book"] = "true"
-                if request.metadata.file_id:
-                    metadata_filter["file_id"] = str(request.metadata.file_id)
+            metadata_filter = self._build_question_metadata_filter(request.metadata)
+            file_ids = self._resolve_question_file_ids(request)
+            if request.metadata and file_ids and len(file_ids) == 1:
+                request.metadata.file_id = file_ids[0]
 
-            all_context = await self.rag.retrieve_with_metadata(
-                query=search_query,
-                top_k=10,
-                metadata_filter=metadata_filter if metadata_filter else None,
-            )
-
-            context = self._select_question_context(all_context, has_specific_file=bool(metadata_filter.get("file_id")))
-            if not context and request.metadata and request.metadata.file_id:
-                context = self._get_transcript_context(request.metadata.file_id)
+            context = await self._retrieve_context_for_file_ids(search_query, metadata_filter, file_ids)
+            if not context:
+                context = await self._retrieve_embedded_content_context(search_query, metadata_filter)
             if not context:
                 context = self._build_general_questions_context(request)
-                logger.info("Generating general questions without embedded teacher content")
+                logger.info("Generating general questions without embedded content")
 
             metadata = request.metadata
             is_arabic = self._is_arabic_from_request_language(request.language)
@@ -162,6 +141,20 @@ class QuestionService:
         parts = [metadata.course, metadata.module, metadata.title, metadata.description, metadata.subject, metadata.grade, prompt]
         return " ".join(filter(None, parts)) or "general education"
 
+    def _build_question_metadata_filter(self, metadata) -> Dict[str, Any]:
+        metadata_filter: Dict[str, Any] = {}
+        if not metadata:
+            return metadata_filter
+        if metadata.subject and metadata.subject != "General":
+            metadata_filter["subject"] = metadata.subject
+        if metadata.grade and metadata.grade != "General":
+            metadata_filter["grade_level"] = metadata.grade
+        if metadata.semester:
+            metadata_filter["semester"] = metadata.semester
+        if metadata.is_course_book:
+            metadata_filter["is_course_book"] = "true"
+        return metadata_filter
+
     def _resolve_lesson_file_id(self, module_item_id: Optional[int]) -> Optional[str]:
         return database_service.get_lesson_video_file_id(module_item_id)
 
@@ -170,6 +163,143 @@ class QuestionService:
             uploaded_by_id,
             require_content=False,
         )
+
+    def _normalize_content_scope(self, explicit_scope: Optional[str], *values: Optional[str]) -> str:
+        raw_scope = str(explicit_scope or "").strip().lower()
+        if raw_scope in {"lesson", "latest", "module", "unit", "chapter", "course"}:
+            return "module" if raw_scope in {"unit", "chapter"} else raw_scope
+
+        text = " ".join(str(v or "") for v in values).lower()
+        course_terms = ("whole course", "full course", "entire course", "all course", "كل الكورس", "الكورس كله", "كورس كامل")
+        module_terms = ("module", "unit", "chapter", "الوحدة", "الموديول", "الفصل", "الباب")
+        lesson_terms = ("lesson", "lecture", "last lesson", "latest lesson", "الدرس", "المحاضرة", "اخر درس", "آخر درس")
+        if any(term in text for term in course_terms):
+            return "course"
+        if any(term in text for term in module_terms):
+            return "module"
+        if any(term in text for term in lesson_terms):
+            return "lesson"
+        return "lesson"
+
+    def _unique_file_ids(self, file_ids: List[Optional[str]]) -> List[str]:
+        seen = set()
+        output = []
+        for file_id in file_ids:
+            if not file_id:
+                continue
+            value = str(file_id)
+            if value not in seen:
+                seen.add(value)
+                output.append(value)
+        return output
+
+    def _resolve_question_file_ids(self, request: GenerateQuestionsRequest) -> List[str]:
+        metadata = request.metadata
+        if not metadata:
+            return []
+        if metadata.file_id:
+            return [str(metadata.file_id)]
+
+        uploaded_by_id = metadata.uploaded_by_id or request.uploadedById
+        scope = self._normalize_content_scope(
+            metadata.content_scope,
+            request.prompt,
+            metadata.course,
+            metadata.module,
+            metadata.title,
+            metadata.description,
+        )
+        file_ids: List[str] = []
+        if scope == "lesson" and metadata.module_item_id:
+            lesson_file_id = self._resolve_lesson_file_id(metadata.module_item_id)
+            file_ids = [lesson_file_id] if lesson_file_id else []
+        if not file_ids and scope != "latest":
+            file_ids = database_service.get_video_file_ids_for_scope(
+                module_item_id=metadata.module_item_id,
+                course_id=metadata.course_id,
+                module_id=metadata.module_id,
+                uploaded_by_id=uploaded_by_id,
+                scope=scope,
+            )
+        if not file_ids and metadata.module_item_id:
+            lesson_file_id = self._resolve_lesson_file_id(metadata.module_item_id)
+            file_ids = [lesson_file_id] if lesson_file_id else []
+        if not file_ids and uploaded_by_id:
+            latest_file_id = self._resolve_latest_teacher_video_id(uploaded_by_id)
+            file_ids = [latest_file_id] if latest_file_id else []
+        return self._unique_file_ids(file_ids)
+
+    def _resolve_quiz_file_ids(self, request: GenerateQuizRequest) -> List[str]:
+        if request.fileId:
+            return [str(request.fileId)]
+
+        scope = self._normalize_content_scope(
+            request.contentScope,
+            request.prompt,
+            request.course,
+            request.module,
+            request.chapter,
+            request.lesson,
+            request.title,
+            request.description,
+        )
+        file_ids: List[str] = []
+        if scope == "lesson" and request.moduleItemId:
+            lesson_file_id = self._resolve_lesson_file_id(request.moduleItemId)
+            file_ids = [lesson_file_id] if lesson_file_id else []
+        if not file_ids and scope != "latest":
+            file_ids = database_service.get_video_file_ids_for_scope(
+                module_item_id=request.moduleItemId,
+                course_id=request.courseId,
+                module_id=request.moduleId,
+                uploaded_by_id=request.uploadedById,
+                scope=scope,
+            )
+        if not file_ids and request.moduleItemId:
+            lesson_file_id = self._resolve_lesson_file_id(request.moduleItemId)
+            file_ids = [lesson_file_id] if lesson_file_id else []
+        if not file_ids and request.uploadedById:
+            latest_file_id = self._resolve_latest_teacher_video_id(request.uploadedById)
+            file_ids = [latest_file_id] if latest_file_id else []
+        return self._unique_file_ids(file_ids)
+
+    async def _retrieve_context_for_file_ids(
+        self,
+        search_query: str,
+        metadata_filter: Dict[str, Any],
+        file_ids: List[str],
+    ) -> List[Dict[str, Any]]:
+        context: List[Dict[str, Any]] = []
+        for file_id in file_ids:
+            current_filter = dict(metadata_filter)
+            current_filter["file_id"] = str(file_id)
+            all_context = await self.rag.retrieve_with_metadata(
+                query=search_query,
+                top_k=10,
+                metadata_filter=current_filter,
+            )
+            selected = self._select_question_context(all_context, has_specific_file=True)
+            context.extend(selected or self._get_transcript_context(file_id))
+        return context[:12]
+
+    async def _retrieve_embedded_content_context(
+        self,
+        search_query: str,
+        metadata_filter: Dict[str, Any],
+    ) -> List[Dict[str, Any]]:
+        if not metadata_filter and search_query.strip().lower() == "general education":
+            return []
+
+        all_context = await self.rag.retrieve_with_metadata(
+            query=search_query,
+            top_k=10,
+            metadata_filter=metadata_filter or None,
+        )
+        context = self._select_question_context(all_context, has_specific_file=False)
+        for item in context:
+            item.setdefault("metadata", {})
+            item["metadata"].setdefault("source", "embedded_content")
+        return context
 
     def _select_question_context(self, retrieved_context: List[Dict[str, Any]], has_specific_file: bool = False) -> List[Dict[str, Any]]:
         if not retrieved_context:
@@ -353,11 +483,11 @@ class QuestionService:
         subject = request.metadata.subject if request.metadata else "General"
         module = request.metadata.module if request.metadata else ""
         source_rule = (
-            "- Use only the provided teacher lesson context from retrieved embeddings as the source of truth.\n"
+            "- Use only the provided retrieved lesson/course content as the source of truth.\n"
             "- Do not invent questions from general knowledge when the context does not support them."
             if has_teacher_context
             else
-            "- No embedded teacher content was found. Generate general educational questions from the provided metadata and instructions.\n"
+            "- No embedded lesson/course content was found. Generate general educational questions from the provided metadata and instructions.\n"
             "- Do not claim the questions are based on a teacher video/transcript."
         )
         return f"""You are an expert educational content creator specializing in {lang}.
@@ -629,17 +759,17 @@ Return JSON with: question, explanation, examples[]. Use {'Arabic' if is_ar else
         return AskAIResponse(question=raw.get("question", request.question), explanation=raw.get("explanation", ""), examples=raw.get("examples", []) or [])
 
     async def generate_quiz(self, request: GenerateQuizRequest) -> List[QuizQuestion]:
-        if not request.fileId:
-            request.fileId = self._resolve_lesson_file_id(request.moduleItemId)
-        if not request.fileId:
-            request.fileId = self._resolve_latest_teacher_video_id(request.uploadedById)
+        resolved_file_ids = self._resolve_quiz_file_ids(request)
+        if resolved_file_ids and not request.fileId:
+            request.fileId = resolved_file_ids[0]
+        object.__setattr__(request, "_resolvedFileIds", resolved_file_ids)
 
         context = await self._get_quiz_context(request)
         has_teacher_context = self._has_teacher_context(context)
         if not context:
             context = self._build_general_quiz_context(request)
             has_teacher_context = False
-            logger.info("Generating general quiz without embedded teacher content")
+            logger.info("Generating general quiz without embedded content")
 
         is_ar = self._is_arabic_from_request_language(request.language)
         if is_ar is None:
@@ -709,19 +839,16 @@ Return JSON array only."""
     def _quiz_source_rules(self, has_teacher_context: bool) -> str:
         if has_teacher_context:
             return (
-                "Use only the provided teacher lesson context from retrieved embeddings as the source of truth.\n"
+                "Use only the provided retrieved lesson/course content as the source of truth.\n"
                 "Prioritize the focus/instructions when selecting concepts, but only if the provided context supports them.\n"
                 "Do not invent quiz questions from general knowledge when the context does not support them."
             )
         return (
-            "No embedded teacher content was found. Generate a general educational quiz from the metadata and focus/instructions.\n"
+            "No embedded lesson/course content was found. Generate a general educational quiz from the metadata and focus/instructions.\n"
             "Do not claim the quiz is based on a teacher video/transcript."
         )
 
     async def _get_quiz_context(self, request: GenerateQuizRequest) -> List[Dict[str, Any]]:
-        if not request.fileId:
-            return []
-
         search_query = " ".join(
             filter(
                 None,
@@ -739,24 +866,22 @@ Return JSON array only."""
             )
         ) or request.subject
 
-        metadata_filter = {}
-        if request.fileId:
-            metadata_filter["file_id"] = str(request.fileId)
-        if not request.fileId and request.subject and request.subject != "General":
+        metadata_filter: Dict[str, Any] = {}
+        if request.subject and request.subject != "General":
             metadata_filter["subject"] = request.subject
-        if not request.fileId and request.grade and request.grade != "General":
+        if request.grade and request.grade != "General":
             metadata_filter["grade_level"] = request.grade
+
+        file_ids = self._unique_file_ids(getattr(request, "_resolvedFileIds", None) or ([request.fileId] if request.fileId else []))
+        if file_ids:
+            return await self._retrieve_context_for_file_ids(search_query, metadata_filter, file_ids)
 
         all_context = await self.rag.retrieve_with_metadata(
             query=search_query,
             top_k=10,
             metadata_filter=metadata_filter or None,
         )
-        context = self._select_question_context(all_context, has_specific_file=bool(request.fileId))
-        if context:
-            return context
-
-        return self._get_transcript_context(request.fileId)
+        return self._select_question_context(all_context, has_specific_file=False)
 
     def _get_transcript_context(self, file_id: Optional[str]) -> List[Dict[str, Any]]:
         if not file_id:

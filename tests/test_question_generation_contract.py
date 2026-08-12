@@ -275,6 +275,41 @@ def test_generate_questions_resolves_latest_teacher_video_when_no_file_id(monkey
     assert captured["metadata_filter"]["file_id"] == "latest-video-id"
 
 
+def test_generate_questions_uses_module_scope_video_ids(monkeypatch):
+    service = QuestionService()
+    seen_file_ids = []
+
+    def fake_scoped(**kwargs):
+        assert kwargs["scope"] == "module"
+        assert kwargs["module_id"] == 7
+        assert kwargs["uploaded_by_id"] == "teacher-1"
+        return ["module-video-1", "module-video-2"]
+
+    monkeypatch.setattr(question_service_module.database_service, "get_video_file_ids_for_scope", fake_scoped)
+
+    async def fake_retrieve_with_metadata(query, top_k=5, metadata_filter=None, min_score=0.0):
+        seen_file_ids.append(metadata_filter["file_id"])
+        return [{"text": f"{metadata_filter['file_id']} content", "score": 1.0, "metadata": {"file_id": metadata_filter["file_id"]}}]
+
+    async def fake_generate_structured_output(prompt, context, output_schema, system_instruction=None):
+        return []
+
+    service.rag = _FakeRag([])
+    service.rag.retrieve_with_metadata = fake_retrieve_with_metadata
+    service.rag.generate_structured_output = fake_generate_structured_output
+
+    asyncio.run(
+        service.generate_questions(
+            GenerateQuestionsRequest(
+                metadata={"subject": "Physics", "moduleId": 7, "uploadedById": "teacher-1", "contentScope": "module"},
+                questionsNumber=1,
+            )
+        )
+    )
+
+    assert seen_file_ids == ["module-video-1", "module-video-2"]
+
+
 def test_generate_questions_falls_back_to_general_context_when_no_content():
     service = QuestionService()
     captured = {}
@@ -298,7 +333,7 @@ def test_generate_questions_falls_back_to_general_context_when_no_content():
     )
 
     assert captured["context"][0]["metadata"]["source"] == "general_fallback"
-    assert "No embedded teacher content was found" in captured["system_instruction"]
+    assert "No embedded lesson/course content was found" in captured["system_instruction"]
 
 
 def test_context_language_overrides_arabic_focus_for_english_video():
@@ -324,13 +359,14 @@ def test_quiz_context_requires_retrieved_teacher_content():
     assert context == []
 
 
-def test_quiz_context_requires_file_id_even_if_subject_matches_context():
+def test_quiz_context_uses_embedded_subject_content_without_file_id():
     service = QuestionService()
     service.rag = _FakeRag([{"text": "physics content", "score": 1.0, "metadata": {"subject": "Physics"}}])
 
     context = asyncio.run(service._get_quiz_context(GenerateQuizRequest(subject="Physics")))
 
-    assert context == []
+    assert context
+    assert context[0]["text"] == "physics content"
 
 
 def test_quiz_context_falls_back_to_raw_transcript_when_embeddings_missing(monkeypatch):
@@ -419,7 +455,7 @@ def test_generate_quiz_falls_back_to_general_context_when_no_content():
     asyncio.run(service.generate_quiz(GenerateQuizRequest(subject="Physics", numberOfQuestions=1)))
 
     assert captured["context"][0]["metadata"]["source"] == "general_fallback"
-    assert "No embedded teacher content was found" in captured["prompt"]
+    assert "No embedded lesson/course content was found" in captured["prompt"]
     assert "general educational MCQ quizzes" in captured["system_instruction"]
 
 

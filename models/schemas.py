@@ -41,6 +41,12 @@ class QuestionMetadata(BaseModel):
     grade: Optional[str] = Field(default="General", validation_alias=AliasChoices("grade", "gradeLevel", "grade_level"))
     semester: Optional[str] = None
     is_course_book: bool = Field(default=False, validation_alias=AliasChoices("is_course_book", "isCourseBook"))
+    course_id: Optional[int] = Field(default=None, validation_alias=AliasChoices("course_id", "courseId"))
+    module_id: Optional[int] = Field(default=None, validation_alias=AliasChoices("module_id", "moduleId"))
+    content_scope: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("content_scope", "contentScope", "scope", "quizScope", "questionScope"),
+    )
     file_id: Optional[str] = Field(default=None, validation_alias=AliasChoices("file_id", "fileId", "videoId"))
     uploaded_by_id: Optional[str] = Field(
         default=None,
@@ -320,6 +326,12 @@ class GenerateQuizRequest(BaseModel):
     title: Optional[str] = ""
     description: Optional[str] = ""
     fileId: Optional[str] = Field(default=None, validation_alias=AliasChoices("fileId", "file_id", "videoId"))
+    courseId: Optional[int] = Field(default=None, validation_alias=AliasChoices("courseId", "course_id"))
+    moduleId: Optional[int] = Field(default=None, validation_alias=AliasChoices("moduleId", "module_id"))
+    contentScope: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("contentScope", "content_scope", "scope", "quizScope", "questionScope"),
+    )
     uploadedById: Optional[str] = Field(
         default=None,
         validation_alias=AliasChoices("uploadedById", "uploaded_by_id", "teacherId", "teacher_id", "userId", "user_id"),

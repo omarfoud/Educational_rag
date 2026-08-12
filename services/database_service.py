@@ -358,6 +358,99 @@ class DatabaseService:
             logger.warning("Could not resolve lesson video file id for module item %s: %s", module_item_id, e)
         return None
 
+    def get_video_file_ids_for_scope(
+        self,
+        module_item_id: int | str | None = None,
+        course_id: int | str | None = None,
+        module_id: int | str | None = None,
+        uploaded_by_id: str | None = None,
+        scope: str | None = None,
+        limit: int = 25,
+    ) -> list[str]:
+        """Return lesson video ids for a lesson/module/course scope from LMS tables."""
+        def _int_or_none(value):
+            if value in (None, ""):
+                return None
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return None
+
+        module_item_id = _int_or_none(module_item_id)
+        course_id = _int_or_none(course_id)
+        module_id = _int_or_none(module_id)
+        normalized_scope = (scope or "lesson").strip().lower()
+        limit = max(1, min(int(limit or 25), 100))
+
+        try:
+            with self.get_session() as session:
+                if module_item_id and (not course_id or not module_id):
+                    row = session.execute(
+                        sql_text(
+                            '''
+                            SELECT "CourseId", "ModuleId"
+                            FROM "ModuleItems"
+                            WHERE "Id" = :module_item_id
+                            LIMIT 1
+                            '''
+                        ),
+                        {"module_item_id": module_item_id},
+                    ).first()
+                    if row:
+                        course_id = course_id or row[0]
+                        module_id = module_id or row[1]
+
+                where_parts = ['l."VideoId" IS NOT NULL', 'l."VideoId" <> \'\'']
+                params: dict[str, object] = {"limit": limit}
+
+                if normalized_scope in {"module", "unit", "chapter"} and module_id:
+                    where_parts.append('mi."ModuleId" = :module_id')
+                    params["module_id"] = module_id
+                    if course_id:
+                        where_parts.append('mi."CourseId" = :course_id')
+                        params["course_id"] = course_id
+                elif normalized_scope == "course" and course_id:
+                    where_parts.append('mi."CourseId" = :course_id')
+                    params["course_id"] = course_id
+                elif module_item_id:
+                    where_parts.append('mi."Id" = :module_item_id')
+                    params["module_item_id"] = module_item_id
+                elif module_id:
+                    where_parts.append('mi."ModuleId" = :module_id')
+                    params["module_id"] = module_id
+                    if course_id:
+                        where_parts.append('mi."CourseId" = :course_id')
+                        params["course_id"] = course_id
+                elif course_id:
+                    where_parts.append('mi."CourseId" = :course_id')
+                    params["course_id"] = course_id
+                else:
+                    return []
+
+                join_files = ""
+                if uploaded_by_id:
+                    join_files = 'JOIN "Files" f ON f."Id" = l."VideoId" AND f."UploadedById" = :uploaded_by_id'
+                    params["uploaded_by_id"] = str(uploaded_by_id)
+
+                rows = session.execute(
+                    sql_text(
+                        f'''
+                        SELECT DISTINCT l."VideoId", mi."Order", mi."Id"
+                        FROM "Lessons" l
+                        JOIN "ModuleItems" mi ON mi."Id" = l."ModuleItemId"
+                        {join_files}
+                        WHERE {' AND '.join(where_parts)}
+                        ORDER BY mi."Order" ASC, mi."Id" ASC
+                        LIMIT :limit
+                        '''
+                    ),
+                    params,
+                ).all()
+                return [str(row[0]) for row in rows if row and row[0]]
+        except Exception as e:
+            logger.warning("Could not resolve scoped video ids for scope %s: %s", scope, e)
+            return []
+
     def get_latest_uploaded_video_file_id(self, uploaded_by_id: str | None, require_content: bool = True) -> str | None:
         """Resolve a teacher/user id to the latest uploaded video FileId."""
         if not uploaded_by_id:
@@ -399,6 +492,53 @@ class DatabaseService:
         except Exception as e:
             logger.warning("Could not resolve latest uploaded video for user %s: %s", uploaded_by_id, e)
             return None
+
+    def get_video_processing_status(self, file_id: str) -> dict:
+        """Return processing readiness counters for a video/file id."""
+        try:
+            with self.get_session() as session:
+                row = session.execute(
+                    sql_text(
+                        '''
+                        SELECT
+                            EXISTS(SELECT 1 FROM "Files" WHERE "Id" = :file_id) AS file_exists,
+                            (SELECT COUNT(*) FROM "Transcripts" WHERE "FileId" = :file_id) AS transcripts,
+                            (SELECT COUNT(*) FROM "FileChunks" WHERE "FileId" = :file_id) AS chunks,
+                            (SELECT COUNT(*) FROM "VideoTimestamps" WHERE "FileId" = :file_id) AS timestamps
+                        '''
+                    ),
+                    {"file_id": str(file_id)},
+                ).mappings().first()
+                file_exists = bool(row["file_exists"]) if row else False
+                transcripts = int(row["transcripts"] or 0) if row else 0
+                chunks = int(row["chunks"] or 0) if row else 0
+                timestamps = int(row["timestamps"] or 0) if row else 0
+                ready = transcripts > 0 and chunks > 0
+                status = "ready" if ready else ("processing" if file_exists else "not_found")
+                return {
+                    "fileId": str(file_id),
+                    "fileExists": file_exists,
+                    "transcriptReady": transcripts > 0,
+                    "chunksReady": chunks > 0,
+                    "timestampsReady": timestamps > 0,
+                    "status": status,
+                    "counts": {
+                        "transcripts": transcripts,
+                        "fileChunks": chunks,
+                        "videoTimestamps": timestamps,
+                    },
+                }
+        except Exception as e:
+            logger.warning("Could not fetch video processing status for %s: %s", file_id, e)
+            return {
+                "fileId": str(file_id),
+                "fileExists": False,
+                "transcriptReady": False,
+                "chunksReady": False,
+                "timestampsReady": False,
+                "status": "unknown",
+                "counts": {"transcripts": 0, "fileChunks": 0, "videoTimestamps": 0},
+            }
 
     def file_exists(self, file_id: str) -> bool:
         with self.get_session() as session:
