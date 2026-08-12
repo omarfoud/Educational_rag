@@ -437,6 +437,38 @@ def test_quiz_resolves_lesson_video_id_before_retrieval(monkeypatch):
     assert captured["context"][0]["metadata"]["file_id"] == "gis-video-id"
 
 
+def test_quiz_resolves_latest_module_lesson_when_course_module_scope_is_lesson(monkeypatch):
+    service = QuestionService()
+    captured = {}
+
+    def fake_scoped(**kwargs):
+        assert kwargs["course_id"] == 2
+        assert kwargs["module_id"] == 1
+        assert kwargs["scope"] == "lesson"
+        return ["latest-module-video-id"]
+
+    monkeypatch.setattr(question_service_module.database_service, "get_video_file_ids_for_scope", fake_scoped)
+
+    async def fake_get_context(request):
+        captured["file_id"] = request.fileId
+        return [{"text": "latest module lesson", "score": 1.0, "metadata": {"file_id": request.fileId, "language": "ar"}}]
+
+    async def fake_structured(prompt, schema, system_instruction="", context=None):
+        captured["context"] = context
+        return []
+
+    service._get_quiz_context = fake_get_context
+    service._structured = fake_structured
+
+    asyncio.run(
+        service.generate_quiz(
+            GenerateQuizRequest(subject="Physics", courseId=2, moduleId=1, contentScope="lesson")
+        )
+    )
+
+    assert captured["file_id"] == "latest-module-video-id"
+
+
 def test_quiz_resolves_latest_teacher_video_before_retrieval(monkeypatch):
     service = QuestionService()
     captured = {}

@@ -403,7 +403,23 @@ class DatabaseService:
                 where_parts = ['l."VideoId" IS NOT NULL', 'l."VideoId" <> \'\'']
                 params: dict[str, object] = {"limit": limit}
 
-                if normalized_scope in {"module", "unit", "chapter"} and module_id:
+                latest_only = False
+                order_direction = "ASC"
+
+                if normalized_scope in {"lesson", "latest"} and not module_item_id and module_id:
+                    where_parts.append('mi."ModuleId" = :module_id')
+                    params["module_id"] = module_id
+                    if course_id:
+                        where_parts.append('mi."CourseId" = :course_id')
+                        params["course_id"] = course_id
+                    latest_only = True
+                    order_direction = "DESC"
+                elif normalized_scope in {"lesson", "latest"} and not module_item_id and course_id:
+                    where_parts.append('mi."CourseId" = :course_id')
+                    params["course_id"] = course_id
+                    latest_only = True
+                    order_direction = "DESC"
+                elif normalized_scope in {"module", "unit", "chapter"} and module_id:
                     where_parts.append('mi."ModuleId" = :module_id')
                     params["module_id"] = module_id
                     if course_id:
@@ -440,11 +456,11 @@ class DatabaseService:
                         JOIN "ModuleItems" mi ON mi."Id" = l."ModuleItemId"
                         {join_files}
                         WHERE {' AND '.join(where_parts)}
-                        ORDER BY mi."Order" ASC, mi."Id" ASC
+                        ORDER BY mi."Order" {order_direction}, mi."Id" {order_direction}
                         LIMIT :limit
                         '''
                     ),
-                    params,
+                    {**params, "limit": 1 if latest_only else limit},
                 ).all()
                 return [str(row[0]) for row in rows if row and row[0]]
         except Exception as e:
