@@ -358,6 +358,48 @@ class DatabaseService:
             logger.warning("Could not resolve lesson video file id for module item %s: %s", module_item_id, e)
         return None
 
+    def get_latest_uploaded_video_file_id(self, uploaded_by_id: str | None, require_content: bool = True) -> str | None:
+        """Resolve a teacher/user id to the latest uploaded video FileId."""
+        if not uploaded_by_id:
+            return None
+
+        try:
+            with self.get_session() as session:
+                content_filter = ""
+                if require_content:
+                    content_filter = '''
+                      AND (
+                        EXISTS (
+                          SELECT 1 FROM "Transcripts" t
+                          WHERE t."FileId" = f."Id"
+                            AND t."FullText" IS NOT NULL
+                            AND t."FullText" <> ''
+                        )
+                        OR EXISTS (
+                          SELECT 1 FROM "FileChunks" c
+                          WHERE c."FileId" = f."Id"
+                        )
+                      )
+                    '''
+                row = session.execute(
+                    sql_text(
+                        f'''
+                        SELECT f."Id"
+                        FROM "Files" f
+                        WHERE f."UploadedById" = :uploaded_by_id
+                          AND f."Type" = 0
+                          {content_filter}
+                        ORDER BY f."CreatedAt" DESC, f."UpdatedAt" DESC, f."Id" DESC
+                        LIMIT 1
+                        '''
+                    ),
+                    {"uploaded_by_id": str(uploaded_by_id)},
+                ).first()
+                return str(row[0]) if row and row[0] else None
+        except Exception as e:
+            logger.warning("Could not resolve latest uploaded video for user %s: %s", uploaded_by_id, e)
+            return None
+
     def file_exists(self, file_id: str) -> bool:
         with self.get_session() as session:
             return session.query(Files).filter(Files.id == file_id).first() is not None

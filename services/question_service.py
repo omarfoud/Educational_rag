@@ -92,6 +92,10 @@ class QuestionService:
         try:
             if request.metadata and not request.metadata.file_id:
                 request.metadata.file_id = self._resolve_lesson_file_id(request.metadata.module_item_id)
+            if request.metadata and not request.metadata.file_id:
+                request.metadata.file_id = self._resolve_latest_teacher_video_id(
+                    request.metadata.uploaded_by_id or request.uploadedById
+                )
 
             search_query = self._build_search_query(request.metadata, request.prompt or "")
             metadata_filter = {}
@@ -160,6 +164,12 @@ class QuestionService:
 
     def _resolve_lesson_file_id(self, module_item_id: Optional[int]) -> Optional[str]:
         return database_service.get_lesson_video_file_id(module_item_id)
+
+    def _resolve_latest_teacher_video_id(self, uploaded_by_id: Optional[str]) -> Optional[str]:
+        return database_service.get_latest_uploaded_video_file_id(
+            uploaded_by_id,
+            require_content=False,
+        )
 
     def _select_question_context(self, retrieved_context: List[Dict[str, Any]], has_specific_file: bool = False) -> List[Dict[str, Any]]:
         if not retrieved_context:
@@ -621,6 +631,8 @@ Return JSON with: question, explanation, examples[]. Use {'Arabic' if is_ar else
     async def generate_quiz(self, request: GenerateQuizRequest) -> List[QuizQuestion]:
         if not request.fileId:
             request.fileId = self._resolve_lesson_file_id(request.moduleItemId)
+        if not request.fileId:
+            request.fileId = self._resolve_latest_teacher_video_id(request.uploadedById)
 
         context = await self._get_quiz_context(request)
         has_teacher_context = self._has_teacher_context(context)
