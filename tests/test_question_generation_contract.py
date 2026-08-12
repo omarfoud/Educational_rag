@@ -245,6 +245,48 @@ def test_generate_questions_resolves_lesson_video_id(monkeypatch):
     assert captured["context"][0]["metadata"]["file_id"] == "gis-video-id"
 
 
+def test_generate_questions_accepts_pascal_case_payload_and_top_level_module_item(monkeypatch):
+    service = QuestionService()
+    captured = {}
+
+    monkeypatch.setattr(question_service_module.database_service, "get_lesson_video_file_id", lambda item_id: "latest-lesson-video")
+
+    async def fake_retrieve_with_metadata(query, top_k=5, metadata_filter=None, min_score=0.0):
+        captured["query"] = query
+        captured["metadata_filter"] = metadata_filter
+        return [{"text": "شرح اخر درس", "score": 1.0, "metadata": {"file_id": "latest-lesson-video", "language": "ar"}}]
+
+    async def fake_generate_structured_output(prompt, context, output_schema, system_instruction=None):
+        captured["context"] = context
+        return []
+
+    service.rag = _FakeRag([])
+    service.rag.retrieve_with_metadata = fake_retrieve_with_metadata
+    service.rag.generate_structured_output = fake_generate_structured_output
+
+    payload = {
+        "Prompt": "اعمل اسئله علي اخر درس انا نزلته",
+        "Metadata": {
+            "Course": "الفيزياء - الصف الثاني الثانوي",
+            "Subject": "فيزياء",
+            "Grade": "الصف الثاني الثانوي",
+            "Module": "الوحده الاولي فيزياء - القوه الكهربائيه",
+            "Title": "اختبار علي اخر درس",
+            "Description": "وصف الاختبار",
+        },
+        "Difficulty": "mix",
+        "Type": "mix",
+        "QuestionsNumber": 5,
+        "ModuleItemId": 8,
+    }
+
+    asyncio.run(service.generate_questions(GenerateQuestionsRequest.model_validate(payload)))
+
+    assert captured["metadata_filter"]["file_id"] == "latest-lesson-video"
+    assert captured["metadata_filter"]["subject"] == "فيزياء"
+    assert "اخر درس" in captured["query"]
+
+
 def test_generate_questions_resolves_latest_teacher_video_when_no_file_id(monkeypatch):
     service = QuestionService()
     captured = {}

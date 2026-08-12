@@ -90,6 +90,7 @@ class QuestionService:
     # --------------------------- questions ---------------------------
     async def generate_questions(self, request: GenerateQuestionsRequest) -> List[GeneratedQuestion]:
         try:
+            self._merge_top_level_question_scope(request)
             search_query = self._build_search_query(request.metadata, request.prompt or "")
             metadata_filter = self._build_question_metadata_filter(request.metadata)
             file_ids = self._resolve_question_file_ids(request)
@@ -137,6 +138,21 @@ class QuestionService:
         except Exception as e:
             logger.error(f"Question generation failed: {e}")
             raise
+
+    def _merge_top_level_question_scope(self, request: GenerateQuestionsRequest) -> None:
+        metadata = request.metadata
+        if not metadata:
+            return
+        if request.moduleItemId and not metadata.module_item_id:
+            metadata.module_item_id = request.moduleItemId
+        if request.courseId and not metadata.course_id:
+            metadata.course_id = request.courseId
+        if request.moduleId and not metadata.module_id:
+            metadata.module_id = request.moduleId
+        if request.contentScope and not metadata.content_scope:
+            metadata.content_scope = request.contentScope
+        if request.uploadedById and not metadata.uploaded_by_id:
+            metadata.uploaded_by_id = request.uploadedById
 
     def _build_search_query(self, metadata, prompt: str) -> str:
         if not metadata:

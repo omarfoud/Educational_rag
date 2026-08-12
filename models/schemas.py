@@ -33,28 +33,28 @@ class ProgressUpdate(BaseModel):
 class QuestionMetadata(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    course: Optional[str] = ""
-    module: Optional[str] = ""
-    title: Optional[str] = ""
-    description: Optional[str] = ""
-    subject: Optional[str] = "General"
-    grade: Optional[str] = Field(default="General", validation_alias=AliasChoices("grade", "gradeLevel", "grade_level"))
-    semester: Optional[str] = None
-    is_course_book: bool = Field(default=False, validation_alias=AliasChoices("is_course_book", "isCourseBook"))
-    course_id: Optional[int] = Field(default=None, validation_alias=AliasChoices("course_id", "courseId"))
-    module_id: Optional[int] = Field(default=None, validation_alias=AliasChoices("module_id", "moduleId"))
+    course: Optional[str] = Field(default="", validation_alias=AliasChoices("course", "Course"))
+    module: Optional[str] = Field(default="", validation_alias=AliasChoices("module", "Module"))
+    title: Optional[str] = Field(default="", validation_alias=AliasChoices("title", "Title"))
+    description: Optional[str] = Field(default="", validation_alias=AliasChoices("description", "Description"))
+    subject: Optional[str] = Field(default="General", validation_alias=AliasChoices("subject", "Subject"))
+    grade: Optional[str] = Field(default="General", validation_alias=AliasChoices("grade", "Grade", "gradeLevel", "grade_level"))
+    semester: Optional[str] = Field(default=None, validation_alias=AliasChoices("semester", "Semester"))
+    is_course_book: bool = Field(default=False, validation_alias=AliasChoices("is_course_book", "isCourseBook", "IsCourseBook"))
+    course_id: Optional[int] = Field(default=None, validation_alias=AliasChoices("course_id", "courseId", "CourseId"))
+    module_id: Optional[int] = Field(default=None, validation_alias=AliasChoices("module_id", "moduleId", "ModuleId"))
     content_scope: Optional[str] = Field(
         default=None,
-        validation_alias=AliasChoices("content_scope", "contentScope", "scope", "quizScope", "questionScope"),
+        validation_alias=AliasChoices("content_scope", "contentScope", "ContentScope", "scope", "Scope", "quizScope", "questionScope"),
     )
-    file_id: Optional[str] = Field(default=None, validation_alias=AliasChoices("file_id", "fileId", "videoId"))
+    file_id: Optional[str] = Field(default=None, validation_alias=AliasChoices("file_id", "fileId", "FileId", "videoId", "VideoId"))
     uploaded_by_id: Optional[str] = Field(
         default=None,
-        validation_alias=AliasChoices("uploaded_by_id", "uploadedById", "teacherId", "teacher_id", "userId", "user_id"),
+        validation_alias=AliasChoices("uploaded_by_id", "uploadedById", "UploadedById", "teacherId", "TeacherId", "teacher_id", "userId", "UserId", "user_id"),
     )
     module_item_id: Optional[int] = Field(
         default=None,
-        validation_alias=AliasChoices("module_item_id", "moduleItemId", "itemId", "lessonId"),
+        validation_alias=AliasChoices("module_item_id", "moduleItemId", "ModuleItemId", "itemId", "ItemId", "lessonId", "LessonId"),
     )
 
 
@@ -84,15 +84,25 @@ class GeneratedQuestion(BaseModel):
 
 class GenerateQuestionsRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
-    metadata: QuestionMetadata = Field(default_factory=QuestionMetadata)
-    prompt: Optional[str] = ""
-    questionsNumber: int = Field(default=10, ge=1, le=50)
-    difficulty: DifficultyLevel = Field(default=DifficultyLevel.MIX)
-    type: QuestionType = Field(default=QuestionType.MCQ)
-    language: Optional[str] = Field(default=None, validation_alias=AliasChoices("language", "outputLanguage", "lang"))
+    metadata: QuestionMetadata = Field(default_factory=QuestionMetadata, validation_alias=AliasChoices("metadata", "Metadata"))
+    prompt: Optional[str] = Field(default="", validation_alias=AliasChoices("prompt", "Prompt", "focus", "Focus", "instructions", "Instructions"))
+    questionsNumber: int = Field(default=10, ge=1, le=50, validation_alias=AliasChoices("questionsNumber", "QuestionsNumber", "numberOfQuestions", "NumberOfQuestions"))
+    difficulty: DifficultyLevel = Field(default=DifficultyLevel.MIX, validation_alias=AliasChoices("difficulty", "Difficulty"))
+    type: QuestionType = Field(default=QuestionType.MCQ, validation_alias=AliasChoices("type", "Type"))
+    language: Optional[str] = Field(default=None, validation_alias=AliasChoices("language", "Language", "outputLanguage", "OutputLanguage", "lang"))
     uploadedById: Optional[str] = Field(
         default=None,
-        validation_alias=AliasChoices("uploadedById", "uploaded_by_id", "teacherId", "teacher_id", "userId", "user_id"),
+        validation_alias=AliasChoices("uploadedById", "UploadedById", "uploaded_by_id", "teacherId", "TeacherId", "teacher_id", "userId", "UserId", "user_id"),
+    )
+    moduleItemId: Optional[int] = Field(
+        default=None,
+        validation_alias=AliasChoices("moduleItemId", "ModuleItemId", "module_item_id", "itemId", "ItemId", "lessonId", "LessonId"),
+    )
+    courseId: Optional[int] = Field(default=None, validation_alias=AliasChoices("courseId", "CourseId", "course_id"))
+    moduleId: Optional[int] = Field(default=None, validation_alias=AliasChoices("moduleId", "ModuleId", "module_id"))
+    contentScope: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("contentScope", "ContentScope", "content_scope", "scope", "Scope", "questionScope"),
     )
 
     @field_validator("difficulty", mode="before")
