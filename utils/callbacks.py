@@ -125,7 +125,7 @@ class ProgressTracker:
         max_retries: int = 3
     ):
         """
-        Send update via HTTP POST with retry logic.
+        Send update via HTTP PUT with retry logic.
         
         Args:
             callback_url: Target URL
@@ -134,7 +134,7 @@ class ProgressTracker:
         """
         for attempt in range(max_retries):
             try:
-                response = await self.http_client.post(
+                response = await self.http_client.put(
                     callback_url,
                     json=update.model_dump()
                 )
