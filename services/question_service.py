@@ -343,7 +343,10 @@ class QuestionService:
         if not file_id:
             return []
         try:
-            chunks = database_service.get_filtered_chunks({"file_id": str(file_id)}, limit=12)
+            if hasattr(database_service, "get_chunks_for_file"):
+                chunks = database_service.get_chunks_for_file(str(file_id), limit=12)
+            else:
+                chunks = database_service.get_filtered_chunks({"file_id": str(file_id)}, limit=12)
         except Exception as e:
             logger.warning("Could not fetch PostgreSQL chunks for %s: %s", file_id, e)
             return []

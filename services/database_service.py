@@ -627,6 +627,17 @@ class DatabaseService:
                     output.append(self._chunk_to_dict(row))
             return output
 
+    def get_chunks_for_file(self, file_id: str, limit: int = 100) -> list[dict]:
+        with self.get_session() as session:
+            rows = (
+                session.query(FileChunks)
+                .filter(FileChunks.file_id == str(file_id))
+                .order_by(FileChunks.chunk_index.asc(), FileChunks.id.asc())
+                .limit(limit)
+                .all()
+            )
+            return [self._chunk_to_dict(row) for row in rows]
+
     def get_all_chunks(self, limit: int = 2000):
         with self.get_session() as session:
             rows = session.query(FileChunks).order_by(FileChunks.id.desc()).limit(limit).all()
