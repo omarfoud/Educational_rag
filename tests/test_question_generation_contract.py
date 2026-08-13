@@ -1,6 +1,8 @@
 import asyncio
 import importlib
 
+import pytest
+
 from models.enums import DifficultyLevel, QuestionType
 from models.schemas import FlashcardsRequest, GenerateQuestionsRequest, GenerateQuizRequest, QuestionMetadata
 from services.question_service import QuestionService
@@ -243,6 +245,125 @@ def test_generate_questions_resolves_lesson_video_id(monkeypatch):
     assert captured["context"][0]["metadata"]["file_id"] == "gis-video-id"
 
 
+def test_generate_questions_accepts_pascal_case_payload_and_top_level_module_item(monkeypatch):
+    service = QuestionService()
+    captured = {}
+
+    monkeypatch.setattr(question_service_module.database_service, "get_lesson_video_file_id", lambda item_id: "latest-lesson-video")
+
+    async def fake_retrieve_with_metadata(query, top_k=5, metadata_filter=None, min_score=0.0):
+        captured["query"] = query
+        captured["metadata_filter"] = metadata_filter
+        return [{"text": "شرح اخر درس", "score": 1.0, "metadata": {"file_id": "latest-lesson-video", "language": "ar"}}]
+
+    async def fake_generate_structured_output(prompt, context, output_schema, system_instruction=None):
+        captured["context"] = context
+        return []
+
+    service.rag = _FakeRag([])
+    service.rag.retrieve_with_metadata = fake_retrieve_with_metadata
+    service.rag.generate_structured_output = fake_generate_structured_output
+
+    payload = {
+        "Prompt": "اعمل اسئله علي اخر درس انا نزلته",
+        "Metadata": {
+            "Course": "الفيزياء - الصف الثاني الثانوي",
+            "Subject": "فيزياء",
+            "Grade": "الصف الثاني الثانوي",
+            "Module": "الوحده الاولي فيزياء - القوه الكهربائيه",
+            "Title": "اختبار علي اخر درس",
+            "Description": "وصف الاختبار",
+        },
+        "Difficulty": "mix",
+        "Type": "mix",
+        "QuestionsNumber": 5,
+        "ModuleItemId": 8,
+    }
+
+    request = GenerateQuestionsRequest.model_validate(payload)
+    assert request.metadata.module_item_id == 8
+
+    asyncio.run(service.generate_questions(request))
+
+    assert captured["metadata_filter"]["file_id"] == "latest-lesson-video"
+    assert captured["metadata_filter"]["subject"] == "فيزياء"
+    assert "اخر درس" in captured["query"]
+
+
+def test_generate_questions_uses_postgres_chunks_when_vector_search_misses(monkeypatch):
+    service = QuestionService()
+    captured = {}
+
+    monkeypatch.setattr(question_service_module.database_service, "get_lesson_video_file_id", lambda item_id: "lesson-video-id")
+    monkeypatch.setattr(
+        question_service_module.database_service,
+        "get_chunks_for_file",
+        lambda file_id, limit=12: [{"text": "GIS lesson chunk from PostgreSQL", "metadata": {"language": "en"}}],
+    )
+
+    async def fake_retrieve_with_metadata(query, top_k=5, metadata_filter=None, min_score=0.0):
+        return []
+
+    async def fake_generate_structured_output(prompt, context, output_schema, system_instruction=None):
+        captured["context"] = context
+        return []
+
+    service.rag = _FakeRag([])
+    service.rag.retrieve_with_metadata = fake_retrieve_with_metadata
+    service.rag.generate_structured_output = fake_generate_structured_output
+
+    asyncio.run(
+        service.generate_questions(
+            GenerateQuestionsRequest(metadata={"subject": "Physics", "moduleItemId": 8}, questionsNumber=1)
+        )
+    )
+
+    assert captured["context"][0]["text"] == "GIS lesson chunk from PostgreSQL"
+    assert captured["context"][0]["metadata"]["source"] == "postgres_chunks"
+
+
+def test_generate_questions_falls_back_to_course_module_name_resolution(monkeypatch):
+    service = QuestionService()
+    captured = {}
+
+    monkeypatch.setattr(question_service_module.database_service, "get_lesson_video_file_id", lambda item_id: None)
+    monkeypatch.setattr(question_service_module.database_service, "get_video_file_ids_for_scope", lambda **kwargs: [])
+    monkeypatch.setattr(
+        question_service_module.database_service,
+        "get_latest_video_file_id_by_course_module_names",
+        lambda course_name=None, module_name=None, uploaded_by_id=None, require_content=True: "named-latest-video",
+    )
+    monkeypatch.setattr(
+        question_service_module.database_service,
+        "get_chunks_for_file",
+        lambda file_id, limit=12: [{"text": "latest named lesson chunk", "metadata": {"language": "ar"}}],
+    )
+
+    async def fake_retrieve_with_metadata(query, top_k=5, metadata_filter=None, min_score=0.0):
+        captured["metadata_filter"] = metadata_filter
+        return []
+
+    async def fake_generate_structured_output(prompt, context, output_schema, system_instruction=None):
+        captured["context"] = context
+        return []
+
+    service.rag = _FakeRag([])
+    service.rag.retrieve_with_metadata = fake_retrieve_with_metadata
+    service.rag.generate_structured_output = fake_generate_structured_output
+
+    asyncio.run(
+        service.generate_questions(
+            GenerateQuestionsRequest(
+                metadata={"subject": "Physics", "course": "Course name", "module": "Module name", "moduleItemId": 8},
+                questionsNumber=1,
+            )
+        )
+    )
+
+    assert captured["metadata_filter"]["file_id"] == "named-latest-video"
+    assert captured["context"][0]["text"] == "latest named lesson chunk"
+
+
 def test_generate_questions_resolves_latest_teacher_video_when_no_file_id(monkeypatch):
     service = QuestionService()
     captured = {}
@@ -273,6 +394,32 @@ def test_generate_questions_resolves_latest_teacher_video_when_no_file_id(monkey
     )
 
     assert captured["metadata_filter"]["file_id"] == "latest-video-id"
+
+
+def test_generate_questions_rejects_unprocessed_resolved_teacher_video(monkeypatch):
+    service = QuestionService()
+
+    monkeypatch.setattr(question_service_module.database_service, "get_lesson_video_file_id", lambda item_id: None)
+    monkeypatch.setattr(
+        question_service_module.database_service,
+        "get_latest_uploaded_video_file_id",
+        lambda user_id, require_content=True: "latest-unprocessed-video",
+    )
+    monkeypatch.setattr(question_service_module.database_service, "get_transcript_raw", lambda file_id: None)
+
+    async def fake_retrieve_with_metadata(query, top_k=5, metadata_filter=None, min_score=0.0):
+        return []
+
+    service.rag = _FakeRag([])
+    service.rag.retrieve_with_metadata = fake_retrieve_with_metadata
+    service._load_transcript_file = lambda file_id: None
+
+    with pytest.raises(ValueError, match="not ready"):
+        asyncio.run(
+            service.generate_questions(
+                GenerateQuestionsRequest(metadata={"subject": "Physics", "uploadedById": "teacher-1"}, questionsNumber=1)
+            )
+        )
 
 
 def test_generate_questions_uses_module_scope_video_ids(monkeypatch):
@@ -409,6 +556,38 @@ def test_quiz_resolves_lesson_video_id_before_retrieval(monkeypatch):
     assert captured["context"][0]["metadata"]["file_id"] == "gis-video-id"
 
 
+def test_quiz_resolves_latest_module_lesson_when_course_module_scope_is_lesson(monkeypatch):
+    service = QuestionService()
+    captured = {}
+
+    def fake_scoped(**kwargs):
+        assert kwargs["course_id"] == 2
+        assert kwargs["module_id"] == 1
+        assert kwargs["scope"] == "lesson"
+        return ["latest-module-video-id"]
+
+    monkeypatch.setattr(question_service_module.database_service, "get_video_file_ids_for_scope", fake_scoped)
+
+    async def fake_get_context(request):
+        captured["file_id"] = request.fileId
+        return [{"text": "latest module lesson", "score": 1.0, "metadata": {"file_id": request.fileId, "language": "ar"}}]
+
+    async def fake_structured(prompt, schema, system_instruction="", context=None):
+        captured["context"] = context
+        return []
+
+    service._get_quiz_context = fake_get_context
+    service._structured = fake_structured
+
+    asyncio.run(
+        service.generate_quiz(
+            GenerateQuizRequest(subject="Physics", courseId=2, moduleId=1, contentScope="lesson")
+        )
+    )
+
+    assert captured["file_id"] == "latest-module-video-id"
+
+
 def test_quiz_resolves_latest_teacher_video_before_retrieval(monkeypatch):
     service = QuestionService()
     captured = {}
@@ -434,6 +613,28 @@ def test_quiz_resolves_latest_teacher_video_before_retrieval(monkeypatch):
     asyncio.run(service.generate_quiz(GenerateQuizRequest(subject="Physics", uploadedById="teacher-1")))
 
     assert captured["file_id"] == "latest-video-id"
+
+
+def test_generate_quiz_rejects_unprocessed_latest_teacher_video(monkeypatch):
+    service = QuestionService()
+
+    monkeypatch.setattr(question_service_module.database_service, "get_lesson_video_file_id", lambda item_id: None)
+    monkeypatch.setattr(
+        question_service_module.database_service,
+        "get_latest_uploaded_video_file_id",
+        lambda user_id, require_content=True: "latest-unprocessed-video",
+    )
+    monkeypatch.setattr(question_service_module.database_service, "get_transcript_raw", lambda file_id: None)
+
+    async def fake_retrieve_with_metadata(query, top_k=5, metadata_filter=None, min_score=0.0):
+        return []
+
+    service.rag = _FakeRag([])
+    service.rag.retrieve_with_metadata = fake_retrieve_with_metadata
+    service._load_transcript_file = lambda file_id: None
+
+    with pytest.raises(ValueError, match="not ready"):
+        asyncio.run(service.generate_quiz(GenerateQuizRequest(subject="Physics", uploadedById="teacher-1")))
 
 
 def test_generate_quiz_falls_back_to_general_context_when_no_content():

@@ -90,13 +90,26 @@ class QuestionService:
     # --------------------------- questions ---------------------------
     async def generate_questions(self, request: GenerateQuestionsRequest) -> List[GeneratedQuestion]:
         try:
+            self._merge_top_level_question_scope(request)
             search_query = self._build_search_query(request.metadata, request.prompt or "")
             metadata_filter = self._build_question_metadata_filter(request.metadata)
             file_ids = self._resolve_question_file_ids(request)
+            logger.info(
+                "Question content resolution: scope=%s moduleItemId=%s courseId=%s moduleId=%s uploadedById=%s fileIds=%s",
+                self._resolved_question_scope(request),
+                request.moduleItemId or (request.metadata.module_item_id if request.metadata else None),
+                request.courseId or (request.metadata.course_id if request.metadata else None),
+                request.moduleId or (request.metadata.module_id if request.metadata else None),
+                request.uploadedById or (request.metadata.uploaded_by_id if request.metadata else None),
+                file_ids,
+            )
             if request.metadata and file_ids and len(file_ids) == 1:
                 request.metadata.file_id = file_ids[0]
 
             context = await self._retrieve_context_for_file_ids(search_query, metadata_filter, file_ids)
+            requires_resolved_content = self._question_requires_resolved_content(request, file_ids)
+            if not context and requires_resolved_content:
+                self._raise_missing_resolved_content(file_ids)
             if not context:
                 context = await self._retrieve_embedded_content_context(search_query, metadata_filter)
             if not context:
@@ -135,6 +148,21 @@ class QuestionService:
             logger.error(f"Question generation failed: {e}")
             raise
 
+    def _merge_top_level_question_scope(self, request: GenerateQuestionsRequest) -> None:
+        metadata = request.metadata
+        if not metadata:
+            return
+        if request.moduleItemId and not metadata.module_item_id:
+            metadata.module_item_id = request.moduleItemId
+        if request.courseId and not metadata.course_id:
+            metadata.course_id = request.courseId
+        if request.moduleId and not metadata.module_id:
+            metadata.module_id = request.moduleId
+        if request.contentScope and not metadata.content_scope:
+            metadata.content_scope = request.contentScope
+        if request.uploadedById and not metadata.uploaded_by_id:
+            metadata.uploaded_by_id = request.uploadedById
+
     def _build_search_query(self, metadata, prompt: str) -> str:
         if not metadata:
             return prompt or "general education"
@@ -162,6 +190,29 @@ class QuestionService:
         return database_service.get_latest_uploaded_video_file_id(
             uploaded_by_id,
             require_content=False,
+        )
+
+    def _text_requests_specific_scope(self, explicit_scope: Optional[str], *values: Optional[str]) -> bool:
+        if explicit_scope:
+            return True
+        text = " ".join(str(v or "") for v in values).lower()
+        terms = (
+            "lesson", "lecture", "last lesson", "latest lesson", "module", "unit", "chapter",
+            "whole course", "full course", "entire course", "all course",
+            "الدرس", "المحاضرة", "اخر درس", "آخر درس", "الوحدة", "الموديول", "الفصل", "الباب",
+            "كل الكورس", "الكورس كله", "كورس كامل",
+        )
+        return any(term in text for term in terms)
+
+    def _resolved_question_scope(self, request: GenerateQuestionsRequest) -> str:
+        metadata = request.metadata
+        return self._normalize_content_scope(
+            metadata.content_scope if metadata else request.contentScope,
+            request.prompt,
+            metadata.course if metadata else None,
+            metadata.module if metadata else None,
+            metadata.title if metadata else None,
+            metadata.description if metadata else None,
         )
 
     def _normalize_content_scope(self, explicit_scope: Optional[str], *values: Optional[str]) -> str:
@@ -224,6 +275,14 @@ class QuestionService:
         if not file_ids and metadata.module_item_id:
             lesson_file_id = self._resolve_lesson_file_id(metadata.module_item_id)
             file_ids = [lesson_file_id] if lesson_file_id else []
+        if not file_ids and (metadata.course or metadata.module):
+            named_file_id = database_service.get_latest_video_file_id_by_course_module_names(
+                course_name=metadata.course,
+                module_name=metadata.module,
+                uploaded_by_id=uploaded_by_id,
+                require_content=False,
+            )
+            file_ids = [named_file_id] if named_file_id else []
         if not file_ids and uploaded_by_id:
             latest_file_id = self._resolve_latest_teacher_video_id(uploaded_by_id)
             file_ids = [latest_file_id] if latest_file_id else []
@@ -258,10 +317,64 @@ class QuestionService:
         if not file_ids and request.moduleItemId:
             lesson_file_id = self._resolve_lesson_file_id(request.moduleItemId)
             file_ids = [lesson_file_id] if lesson_file_id else []
+        if not file_ids and (request.course or request.module or request.chapter):
+            named_file_id = database_service.get_latest_video_file_id_by_course_module_names(
+                course_name=request.course,
+                module_name=request.module or request.chapter,
+                uploaded_by_id=request.uploadedById,
+                require_content=False,
+            )
+            file_ids = [named_file_id] if named_file_id else []
         if not file_ids and request.uploadedById:
             latest_file_id = self._resolve_latest_teacher_video_id(request.uploadedById)
             file_ids = [latest_file_id] if latest_file_id else []
         return self._unique_file_ids(file_ids)
+
+    def _question_requires_resolved_content(self, request: GenerateQuestionsRequest, file_ids: List[str]) -> bool:
+        metadata = request.metadata
+        if not metadata:
+            return bool(file_ids)
+        explicit_scope_requested = self._text_requests_specific_scope(
+            metadata.content_scope or request.contentScope,
+            request.prompt,
+            metadata.title,
+            metadata.description,
+        )
+        return bool(
+            file_ids
+            or metadata.file_id
+            or metadata.module_item_id
+            or metadata.course_id
+            or metadata.module_id
+            or metadata.uploaded_by_id
+            or request.uploadedById
+            or metadata.content_scope
+            or request.contentScope
+            or (explicit_scope_requested and (metadata.course or metadata.module))
+        )
+
+    def _quiz_requires_resolved_content(self, request: GenerateQuizRequest, file_ids: List[str]) -> bool:
+        return bool(
+            file_ids
+            or request.fileId
+            or request.moduleItemId
+            or request.courseId
+            or request.moduleId
+            or request.uploadedById
+            or request.contentScope
+        )
+
+    def _raise_missing_resolved_content(self, file_ids: List[str]) -> None:
+        if file_ids:
+            joined = ", ".join(file_ids[:5])
+            raise ValueError(
+                f"Resolved lesson video content is not ready for fileId(s): {joined}. "
+                "Process the video transcript and embeddings first, then generate the quiz/questions."
+            )
+        raise ValueError(
+            "No lesson video/content was found for the requested lesson, module, course, or teacher. "
+            "Send a valid moduleItemId/courseId/moduleId/uploadedById or process the lesson video first."
+        )
 
     async def _retrieve_context_for_file_ids(
         self,
@@ -279,8 +392,35 @@ class QuestionService:
                 metadata_filter=current_filter,
             )
             selected = self._select_question_context(all_context, has_specific_file=True)
-            context.extend(selected or self._get_transcript_context(file_id))
+            context.extend(selected or self._get_database_chunk_context(file_id) or self._get_transcript_context(file_id))
         return context[:12]
+
+    def _get_database_chunk_context(self, file_id: Optional[str]) -> List[Dict[str, Any]]:
+        if not file_id:
+            return []
+        try:
+            if hasattr(database_service, "get_chunks_for_file"):
+                chunks = database_service.get_chunks_for_file(str(file_id), limit=12)
+            else:
+                chunks = database_service.get_filtered_chunks({"file_id": str(file_id)}, limit=12)
+        except Exception as e:
+            logger.warning("Could not fetch PostgreSQL chunks for %s: %s", file_id, e)
+            return []
+
+        context = []
+        for chunk in chunks[:12]:
+            text = (chunk.get("text") or "").strip()
+            if not text:
+                continue
+            metadata = dict(chunk.get("metadata") or {})
+            metadata.setdefault("file_id", str(file_id))
+            metadata.setdefault("source", "postgres_chunks")
+            context.append({
+                "text": text,
+                "score": 1.0,
+                "metadata": metadata,
+            })
+        return context
 
     async def _retrieve_embedded_content_context(
         self,
@@ -766,6 +906,8 @@ Return JSON with: question, explanation, examples[]. Use {'Arabic' if is_ar else
 
         context = await self._get_quiz_context(request)
         has_teacher_context = self._has_teacher_context(context)
+        if not context and self._quiz_requires_resolved_content(request, resolved_file_ids):
+            self._raise_missing_resolved_content(resolved_file_ids)
         if not context:
             context = self._build_general_quiz_context(request)
             has_teacher_context = False

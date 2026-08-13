@@ -403,7 +403,23 @@ class DatabaseService:
                 where_parts = ['l."VideoId" IS NOT NULL', 'l."VideoId" <> \'\'']
                 params: dict[str, object] = {"limit": limit}
 
-                if normalized_scope in {"module", "unit", "chapter"} and module_id:
+                latest_only = False
+                order_direction = "ASC"
+
+                if normalized_scope in {"lesson", "latest"} and not module_item_id and module_id:
+                    where_parts.append('mi."ModuleId" = :module_id')
+                    params["module_id"] = module_id
+                    if course_id:
+                        where_parts.append('mi."CourseId" = :course_id')
+                        params["course_id"] = course_id
+                    latest_only = True
+                    order_direction = "DESC"
+                elif normalized_scope in {"lesson", "latest"} and not module_item_id and course_id:
+                    where_parts.append('mi."CourseId" = :course_id')
+                    params["course_id"] = course_id
+                    latest_only = True
+                    order_direction = "DESC"
+                elif normalized_scope in {"module", "unit", "chapter"} and module_id:
                     where_parts.append('mi."ModuleId" = :module_id')
                     params["module_id"] = module_id
                     if course_id:
@@ -440,16 +456,73 @@ class DatabaseService:
                         JOIN "ModuleItems" mi ON mi."Id" = l."ModuleItemId"
                         {join_files}
                         WHERE {' AND '.join(where_parts)}
-                        ORDER BY mi."Order" ASC, mi."Id" ASC
+                        ORDER BY mi."Order" {order_direction}, mi."Id" {order_direction}
                         LIMIT :limit
                         '''
                     ),
-                    params,
+                    {**params, "limit": 1 if latest_only else limit},
                 ).all()
                 return [str(row[0]) for row in rows if row and row[0]]
         except Exception as e:
             logger.warning("Could not resolve scoped video ids for scope %s: %s", scope, e)
             return []
+
+    def get_latest_video_file_id_by_course_module_names(
+        self,
+        course_name: str | None = None,
+        module_name: str | None = None,
+        uploaded_by_id: str | None = None,
+        require_content: bool = True,
+    ) -> str | None:
+        if not course_name and not module_name:
+            return None
+
+        try:
+            with self.get_session() as session:
+                where_parts = ['l."VideoId" IS NOT NULL', 'l."VideoId" <> \'\'']
+                params: dict[str, object] = {}
+                if course_name:
+                    where_parts.append('c."Title" ILIKE :course_name')
+                    params["course_name"] = f"%{str(course_name).strip()}%"
+                if module_name:
+                    where_parts.append('m."Title" ILIKE :module_name')
+                    params["module_name"] = f"%{str(module_name).strip()}%"
+
+                join_files = ""
+                if uploaded_by_id:
+                    join_files = 'JOIN "Files" f ON f."Id" = l."VideoId" AND f."UploadedById" = :uploaded_by_id'
+                    params["uploaded_by_id"] = str(uploaded_by_id)
+
+                content_filter = ""
+                if require_content:
+                    content_filter = '''
+                          AND (
+                            EXISTS (SELECT 1 FROM "Transcripts" t WHERE t."FileId" = l."VideoId")
+                            OR EXISTS (SELECT 1 FROM "FileChunks" fc WHERE fc."FileId" = l."VideoId")
+                          )
+                    '''
+
+                row = session.execute(
+                    sql_text(
+                        f'''
+                        SELECT l."VideoId"
+                        FROM "Lessons" l
+                        JOIN "ModuleItems" mi ON mi."Id" = l."ModuleItemId"
+                        JOIN "Courses" c ON c."Id" = mi."CourseId"
+                        JOIN "Modules" m ON m."Id" = mi."ModuleId"
+                        {join_files}
+                        WHERE {' AND '.join(where_parts)}
+                          {content_filter}
+                        ORDER BY mi."Order" DESC, mi."Id" DESC
+                        LIMIT 1
+                        '''
+                    ),
+                    params,
+                ).first()
+                return str(row[0]) if row and row[0] else None
+        except Exception as e:
+            logger.warning("Could not resolve latest video by course/module names: %s", e)
+            return None
 
     def get_latest_uploaded_video_file_id(self, uploaded_by_id: str | None, require_content: bool = True) -> str | None:
         """Resolve a teacher/user id to the latest uploaded video FileId."""
@@ -610,6 +683,17 @@ class DatabaseService:
                 if ok:
                     output.append(self._chunk_to_dict(row))
             return output
+
+    def get_chunks_for_file(self, file_id: str, limit: int = 100) -> list[dict]:
+        with self.get_session() as session:
+            rows = (
+                session.query(FileChunks)
+                .filter(FileChunks.file_id == str(file_id))
+                .order_by(FileChunks.chunk_index.asc(), FileChunks.id.asc())
+                .limit(limit)
+                .all()
+            )
+            return [self._chunk_to_dict(row) for row in rows]
 
     def get_all_chunks(self, limit: int = 2000):
         with self.get_session() as session:
