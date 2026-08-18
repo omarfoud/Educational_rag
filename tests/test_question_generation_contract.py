@@ -100,6 +100,8 @@ def test_generate_quiz_includes_strict_difficulty_rules():
     assert "Make every question EASY" in easy_prompt
     assert "Avoid multi-step reasoning" in easy_prompt
     assert "Make every question HARD" in hard_prompt
+    assert "problem-solving questions" in hard_prompt
+    assert "numerical or scenario-based problems" in hard_prompt
     assert "multi-step reasoning" in hard_prompt
     assert "Do not ask simple definition" in hard_prompt
 
