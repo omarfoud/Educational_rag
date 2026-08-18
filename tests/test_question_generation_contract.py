@@ -94,16 +94,22 @@ def test_generate_quiz_includes_strict_difficulty_rules():
     service._get_quiz_context = lambda request: _async_value([{"text": "teacher context", "score": 1.0, "metadata": {}}])
 
     asyncio.run(service.generate_quiz(GenerateQuizRequest(subject="Physics", difficulty="easy")))
+    asyncio.run(service.generate_quiz(GenerateQuizRequest(subject="Physics", difficulty="medium")))
     asyncio.run(service.generate_quiz(GenerateQuizRequest(subject="Physics", difficulty="hard")))
 
-    easy_prompt, hard_prompt = captured
+    easy_prompt, medium_prompt, hard_prompt = captured
     assert "Make every question EASY" in easy_prompt
     assert "Avoid multi-step reasoning" in easy_prompt
+    assert "Make every question MEDIUM" in medium_prompt
+    assert "simple problem-solving or scenario-based questions" in medium_prompt
+    assert "one clear step" in medium_prompt
     assert "Make every question HARD" in hard_prompt
     assert "problem-solving questions" in hard_prompt
     assert "numerical or scenario-based problems" in hard_prompt
     assert "multi-step reasoning" in hard_prompt
     assert "Do not ask simple definition" in hard_prompt
+    assert "every question must test a different concept" in hard_prompt
+    assert "Do not repeat the same idea" in hard_prompt
 
 
 def test_flashcards_uses_english_for_english_subject_even_when_label_is_arabic():

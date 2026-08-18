@@ -946,6 +946,7 @@ Use {language}.
 {self._language_requirements(language)}
 {self._quiz_source_rules(has_teacher_context)}
 {self._quiz_difficulty_rules(request.difficulty)}
+{self._quiz_variety_rules()}
 Each question must have 4 options and exactly one correct option.
 Return JSON array only."""
         schema = {"type":"array","items":{"question":"string","options":[{"text":"string","isCorrect":"boolean"}],"explanation":"string","type":"mcq"}}
@@ -1008,6 +1009,8 @@ Return JSON array only."""
                 "Difficulty rules:\n"
                 "- Make every question MEDIUM.\n"
                 "- Require applying one concept, interpreting a simple example, or choosing between plausible options.\n"
+                "- Prefer simple problem-solving or scenario-based questions when the subject supports calculations, laws, formulas, diagrams, code, or applied examples.\n"
+                "- For science/math/engineering content, include straightforward numerical or applied questions that require one clear step from the material.\n"
                 "- Include moderate distractors, but avoid multi-step or highly detailed questions."
             )
         if difficulty == DifficultyLevel.HARD:
@@ -1026,6 +1029,14 @@ Return JSON array only."""
             "- Generate a MIXED quiz with visibly different difficulty levels.\n"
             "- Include about one third easy direct-recall questions, one third medium application questions, and one third hard reasoning questions.\n"
             "- Do not make all questions the same difficulty."
+        )
+
+    def _quiz_variety_rules(self) -> str:
+        return (
+            "Question variety rules:\n"
+            "- Inside the same quiz, every question must test a different concept or learning objective.\n"
+            "- Do not repeat the same idea, formula, wording pattern, or answer pattern across questions.\n"
+            "- If the content is narrow, vary the angle: definition, application, misconception, comparison, example, or scenario."
         )
 
     async def _get_quiz_context(self, request: GenerateQuizRequest) -> List[Dict[str, Any]]:
