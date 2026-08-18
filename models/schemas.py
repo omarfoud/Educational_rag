@@ -355,11 +355,13 @@ class AskAIResponse(BaseModel):
 
 class GenerateQuizRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
-    subject: str = Field(..., validation_alias=AliasChoices("subject", "topic"))
-    numberOfQuestions: int = Field(default=10, ge=1, le=50, validation_alias="questionsNumber")
-    difficulty: DifficultyLevel = Field(default=DifficultyLevel.MEDIUM)
-    chapter: Optional[str] = Field(default=None, validation_alias=AliasChoices("chapter", "module"))
-    grade: Optional[str] = ""
+    subject: str = Field(..., validation_alias=AliasChoices("subject", "Subject", "topic", "Topic"))
+    topic: Optional[str] = Field(default="", validation_alias=AliasChoices("topic", "Topic"))
+    numberOfQuestions: int = Field(default=10, ge=1, le=50, validation_alias=AliasChoices("questionsNumber", "numberOfQuestions", "NumberOfQuestions"))
+    difficulty: DifficultyLevel = Field(default=DifficultyLevel.MEDIUM, validation_alias=AliasChoices("difficulty", "Difficulty"))
+    chapter: Optional[str] = Field(default=None, validation_alias=AliasChoices("chapter", "Chapter", "module", "Module"))
+    grade: Optional[str] = Field(default="", validation_alias=AliasChoices("grade", "Grade"))
+    semester: Optional[str] = Field(default=None, validation_alias=AliasChoices("semester", "Semester", "term", "Term"))
     course: Optional[str] = Field(default="", validation_alias=AliasChoices("course", "courseName"))
     module: Optional[str] = Field(default="", validation_alias=AliasChoices("moduleName", "moduleTitle"))
     lesson: Optional[str] = Field(default="", validation_alias=AliasChoices("lesson", "lessonName", "lessonTitle"))

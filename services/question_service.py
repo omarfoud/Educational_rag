@@ -292,6 +292,9 @@ class QuestionService:
         if request.fileId:
             return [str(request.fileId)]
 
+        if not (request.moduleItemId or request.uploadedById or request.contentScope):
+            return []
+
         scope = self._normalize_content_scope(
             request.contentScope,
             request.prompt,
@@ -358,8 +361,6 @@ class QuestionService:
             file_ids
             or request.fileId
             or request.moduleItemId
-            or request.courseId
-            or request.moduleId
             or request.uploadedById
             or request.contentScope
         )
@@ -929,6 +930,7 @@ Return JSON with: question, explanation, examples[]. Use {'Arabic' if is_ar else
         language = self._language_name(is_ar)
         prompt = f"""Generate {request.numberOfQuestions} MCQ quiz questions.
 Subject: {request.subject}
+Topic: {request.topic or ''}
 Course: {request.course or ''}
 Module: {request.module or ''}
 Chapter: {request.chapter or ''}
@@ -938,6 +940,7 @@ Description: {request.description or ''}
 File ID: {request.fileId or ''}
 Focus / Teacher instructions: {request.prompt or ''}
 Grade/Level: {request.grade or ''}
+Semester/Term: {request.semester or ''}
 Difficulty: {request.difficulty.value}
 Use {language}.
 {self._language_requirements(language)}
@@ -999,11 +1002,13 @@ Return JSON array only."""
                     request.module,
                     request.chapter,
                     request.lesson,
+                    request.topic,
                     request.title,
                     request.description,
                     request.prompt,
                     request.subject,
                     request.grade,
+                    request.semester,
                 ],
             )
         ) or request.subject
@@ -1013,10 +1018,36 @@ Return JSON array only."""
             metadata_filter["subject"] = request.subject
         if request.grade and request.grade != "General":
             metadata_filter["grade_level"] = request.grade
+        if request.semester:
+            metadata_filter["semester"] = request.semester
 
         file_ids = self._unique_file_ids(getattr(request, "_resolvedFileIds", None) or ([request.fileId] if request.fileId else []))
         if file_ids:
             return await self._retrieve_context_for_file_ids(search_query, metadata_filter, file_ids)
+
+        document_filter = dict(metadata_filter)
+        document_filter["file_type"] = "document"
+        document_context = self._select_question_context(
+            await self.rag.retrieve_with_metadata(
+                query=search_query,
+                top_k=10,
+                metadata_filter=document_filter,
+            ),
+            has_specific_file=False,
+        )
+        if document_context:
+            return document_context
+
+        document_context = self._select_question_context(
+            await self.rag.retrieve_with_metadata(
+                query=search_query,
+                top_k=10,
+                metadata_filter={"file_type": "document"},
+            ),
+            has_specific_file=False,
+        )
+        if document_context:
+            return document_context
 
         all_context = await self.rag.retrieve_with_metadata(
             query=search_query,
