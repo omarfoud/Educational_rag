@@ -945,6 +945,7 @@ Difficulty: {request.difficulty.value}
 Use {language}.
 {self._language_requirements(language)}
 {self._quiz_source_rules(has_teacher_context)}
+{self._quiz_difficulty_rules(request.difficulty)}
 Each question must have 4 options and exactly one correct option.
 Return JSON array only."""
         schema = {"type":"array","items":{"question":"string","options":[{"text":"string","isCorrect":"boolean"}],"explanation":"string","type":"mcq"}}
@@ -991,6 +992,37 @@ Return JSON array only."""
         return (
             "No embedded lesson/course content was found. Generate a general educational quiz from the metadata and focus/instructions.\n"
             "Do not claim the quiz is based on a teacher video/transcript."
+        )
+
+    def _quiz_difficulty_rules(self, difficulty: DifficultyLevel) -> str:
+        if difficulty == DifficultyLevel.EASY:
+            return (
+                "Difficulty rules:\n"
+                "- Make every question EASY.\n"
+                "- Ask direct recall or single-concept understanding questions.\n"
+                "- Keep wording short and options clearly distinguishable.\n"
+                "- Avoid multi-step reasoning, trick options, and advanced edge cases."
+            )
+        if difficulty == DifficultyLevel.MEDIUM:
+            return (
+                "Difficulty rules:\n"
+                "- Make every question MEDIUM.\n"
+                "- Require applying one concept, interpreting a simple example, or choosing between plausible options.\n"
+                "- Include moderate distractors, but avoid multi-step or highly detailed questions."
+            )
+        if difficulty == DifficultyLevel.HARD:
+            return (
+                "Difficulty rules:\n"
+                "- Make every question HARD.\n"
+                "- Require multi-step reasoning, comparison between close concepts, cause/effect analysis, or applying the idea to a new scenario.\n"
+                "- Use plausible distractors that test misconceptions from the material.\n"
+                "- Do not ask simple definition or direct recall questions unless they are part of a deeper applied question."
+            )
+        return (
+            "Difficulty rules:\n"
+            "- Generate a MIXED quiz with visibly different difficulty levels.\n"
+            "- Include about one third easy direct-recall questions, one third medium application questions, and one third hard reasoning questions.\n"
+            "- Do not make all questions the same difficulty."
         )
 
     async def _get_quiz_context(self, request: GenerateQuizRequest) -> List[Dict[str, Any]]:
@@ -1060,7 +1092,11 @@ Return JSON array only."""
         if not file_id:
             return []
 
-        transcript = database_service.get_transcript_raw(file_id)
+        try:
+            transcript = database_service.get_transcript_raw(file_id)
+        except Exception as e:
+            logger.warning("Could not fetch transcript for %s: %s", file_id, e)
+            transcript = None
         if not transcript:
             transcript = self._load_transcript_file(file_id)
 
