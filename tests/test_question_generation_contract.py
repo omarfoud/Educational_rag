@@ -82,6 +82,28 @@ def test_quiz_uses_english_for_english_subject_even_when_label_is_arabic():
     assert "in English" in captured["system_instruction"]
 
 
+def test_generate_quiz_includes_strict_difficulty_rules():
+    service = QuestionService()
+    captured = []
+
+    async def fake_structured(prompt, schema, system_instruction="", context=None):
+        captured.append(prompt)
+        return []
+
+    service._structured = fake_structured
+    service._get_quiz_context = lambda request: _async_value([{"text": "teacher context", "score": 1.0, "metadata": {}}])
+
+    asyncio.run(service.generate_quiz(GenerateQuizRequest(subject="Physics", difficulty="easy")))
+    asyncio.run(service.generate_quiz(GenerateQuizRequest(subject="Physics", difficulty="hard")))
+
+    easy_prompt, hard_prompt = captured
+    assert "Make every question EASY" in easy_prompt
+    assert "Avoid multi-step reasoning" in easy_prompt
+    assert "Make every question HARD" in hard_prompt
+    assert "multi-step reasoning" in hard_prompt
+    assert "Do not ask simple definition" in hard_prompt
+
+
 def test_flashcards_uses_english_for_english_subject_even_when_label_is_arabic():
     service = QuestionService()
     captured = {}
