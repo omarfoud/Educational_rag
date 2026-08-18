@@ -516,6 +516,43 @@ def test_quiz_context_uses_embedded_subject_content_without_file_id():
     assert context[0]["text"] == "physics content"
 
 
+def test_quiz_context_prefers_documents_from_student_metadata(monkeypatch):
+    service = QuestionService()
+    service.rag = _FakeRag([
+        {"text": "document content about algebra", "score": 1.0, "metadata": {"file_type": "document"}},
+    ])
+
+    def fail_video_resolution(**kwargs):
+        raise AssertionError("generic student quiz should not resolve the latest video")
+
+    monkeypatch.setattr(question_service_module.database_service, "get_video_file_ids_for_scope", fail_video_resolution)
+    monkeypatch.setattr(question_service_module.database_service, "get_latest_video_file_id_by_course_module_names", fail_video_resolution)
+    monkeypatch.setattr(question_service_module.database_service, "get_latest_uploaded_video_file_id", fail_video_resolution)
+
+    context = asyncio.run(
+        service._get_quiz_context(
+            GenerateQuizRequest(
+                Subject="Math",
+                Topic="Algebra",
+                Chapter="Unit 1",
+                Grade="Grade 10",
+                Semester="first",
+                NumberOfQuestions=5,
+            )
+        )
+    )
+
+    assert context[0]["text"] == "document content about algebra"
+    assert service.rag.calls[0]["metadata_filter"] == {
+        "subject": "Math",
+        "grade_level": "Grade 10",
+        "semester": "first",
+        "file_type": "document",
+    }
+    assert "Algebra" in service.rag.last_query
+    assert "Unit 1" in service.rag.last_query
+
+
 def test_quiz_context_falls_back_to_raw_transcript_when_embeddings_missing(monkeypatch):
     service = QuestionService()
     service.rag = _FakeRag([])
@@ -681,7 +718,9 @@ class _FakeRag:
     def __init__(self, context):
         self.context = context
         self.last_query = ""
+        self.calls = []
 
     async def retrieve_with_metadata(self, **kwargs):
         self.last_query = kwargs.get("query", "")
+        self.calls.append(kwargs)
         return self.context
