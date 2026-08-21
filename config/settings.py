@@ -84,6 +84,7 @@ class Settings(BaseSettings):
     # OCR
     ocr_provider: str = 'local'  # openai | local
     openai_ocr_model: str = 'gpt-4.1-mini'
+    openai_ocr_page_batch_size: int = 10
     tesseract_path: str = ''
     ocr_languages: str = 'ara+eng'
 
