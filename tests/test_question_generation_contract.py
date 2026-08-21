@@ -352,6 +352,39 @@ def test_generate_questions_uses_postgres_chunks_when_vector_search_misses(monke
     assert captured["context"][0]["metadata"]["source"] == "postgres_chunks"
 
 
+def test_generate_questions_uses_transcript_when_vector_search_fails(monkeypatch):
+    service = QuestionService()
+    captured = {}
+
+    monkeypatch.setattr(question_service_module.database_service, "get_lesson_video_file_id", lambda item_id: "lesson-video-id")
+    monkeypatch.setattr(question_service_module.database_service, "get_chunks_for_file", lambda file_id, limit=12: [])
+    monkeypatch.setattr(
+        question_service_module.database_service,
+        "get_transcript_raw",
+        lambda file_id: {"text": "Lesson transcript without embeddings", "language": "en", "segments": []},
+    )
+
+    async def failing_retrieve_with_metadata(query, top_k=5, metadata_filter=None, min_score=0.0):
+        raise RuntimeError("embedding collection does not exist")
+
+    async def fake_generate_structured_output(prompt, context, output_schema, system_instruction=None):
+        captured["context"] = context
+        return []
+
+    service.rag = _FakeRag([])
+    service.rag.retrieve_with_metadata = failing_retrieve_with_metadata
+    service.rag.generate_structured_output = fake_generate_structured_output
+
+    asyncio.run(
+        service.generate_questions(
+            GenerateQuestionsRequest(metadata={"subject": "Physics", "moduleItemId": 8}, questionsNumber=1)
+        )
+    )
+
+    assert captured["context"][0]["text"] == "Lesson transcript without embeddings"
+    assert captured["context"][0]["metadata"]["source"] == "transcript"
+
+
 def test_generate_questions_falls_back_to_course_module_name_resolution(monkeypatch):
     service = QuestionService()
     captured = {}
