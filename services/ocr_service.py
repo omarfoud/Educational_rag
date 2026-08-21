@@ -5,8 +5,11 @@ Uses Tesseract OCR with Arabic and English support.
 
 import asyncio
 import base64
+import hashlib
+import json
 import mimetypes
 import os
+import tempfile
 from typing import List, Dict, Optional, Any
 from config.settings import settings
 import logging
@@ -90,7 +93,12 @@ class OCRService:
             Extracted text
         """
         if self._provider() == "openai":
-            return await asyncio.to_thread(self._extract_text_with_openai, pdf_path, "pdf")
+            from PyPDF2 import PdfReader
+            page_count = await asyncio.to_thread(lambda: len(PdfReader(pdf_path).pages))
+            results = await self.extract_pages_with_ocr(pdf_path, list(range(1, page_count + 1)))
+            return "\n\n--- Page Batch Break ---\n\n".join(
+                results[page] for page in sorted(results) if results[page].strip()
+            )
 
         try:
             logger.info(f"Starting OCR on PDF: {pdf_path}")
@@ -153,8 +161,7 @@ class OCRService:
             return {}
 
         if self._provider() == "openai":
-            text = await self.extract_text_from_pdf(pdf_path)
-            return {page_numbers[0]: text}
+            return await self._extract_openai_pdf_pages_batched(pdf_path, page_numbers)
             
         try:
             results = {}
@@ -200,6 +207,104 @@ class OCRService:
         except Exception as e:
             logger.error(f"Batch OCR failed for {pdf_path}: {e}")
             return {}
+
+    async def _extract_openai_pdf_pages_batched(
+        self,
+        pdf_path: str,
+        page_numbers: List[int],
+    ) -> Dict[int, str]:
+        """OCR selected PDF pages through OpenAI in resumable, bounded-size batches."""
+        from PyPDF2 import PdfReader, PdfWriter
+
+        batch_size = max(1, int(getattr(settings, "openai_ocr_page_batch_size", 10) or 10))
+        requested_pages = sorted(set(int(page) for page in page_numbers if int(page) > 0))
+        checkpoint_path = self._ocr_checkpoint_path(pdf_path)
+        results = self._load_ocr_checkpoint(checkpoint_path)
+        pending_pages = [page for page in requested_pages if page not in results]
+
+        if results:
+            logger.info("Resuming OpenAI OCR with %s checkpointed page batches", len(results))
+
+        for offset in range(0, len(pending_pages), batch_size):
+            batch = pending_pages[offset:offset + batch_size]
+            logger.info("OpenAI OCR on PDF batch: pages %s", batch)
+
+            def build_batch_pdf() -> str:
+                reader = PdfReader(pdf_path)
+                writer = PdfWriter()
+                for page_number in batch:
+                    if page_number > len(reader.pages):
+                        raise ValueError(f"PDF page {page_number} is out of range")
+                    writer.add_page(reader.pages[page_number - 1])
+                handle = tempfile.NamedTemporaryFile(
+                    mode="wb",
+                    suffix=".pdf",
+                    prefix="openai_ocr_batch_",
+                    dir=self.temp_path,
+                    delete=False,
+                )
+                try:
+                    writer.write(handle)
+                    return handle.name
+                finally:
+                    handle.close()
+
+            os.makedirs(self.temp_path, exist_ok=True)
+            batch_path = await asyncio.to_thread(build_batch_pdf)
+            try:
+                text = await asyncio.to_thread(self._extract_text_with_openai, batch_path, "pdf")
+            except Exception as exc:
+                if self._is_insufficient_quota_error(exc):
+                    raise RuntimeError(
+                        "OpenAI API credit is unavailable for the active project key. "
+                        "Completed OCR batches remain checkpointed; add credit or replace "
+                        "OPENAI_API_KEY, then retry."
+                    ) from exc
+                raise
+            finally:
+                try:
+                    os.remove(batch_path)
+                except OSError:
+                    logger.warning("Could not remove temporary OCR batch %s", batch_path)
+
+            # Store each batch as one ordered text segment. The document pipeline
+            # merges page slots later, so exact per-page splitting is unnecessary.
+            results[batch[0]] = text
+            for page in batch[1:]:
+                results[page] = ""
+            self._save_ocr_checkpoint(checkpoint_path, results)
+
+        return {page: results.get(page, "") for page in requested_pages}
+
+    def _ocr_checkpoint_path(self, pdf_path: str) -> str:
+        stat = os.stat(pdf_path)
+        identity = f"{os.path.abspath(pdf_path)}:{stat.st_size}"
+        digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:20]
+        checkpoint_dir = os.path.join(self.temp_path, "ocr_checkpoints")
+        os.makedirs(checkpoint_dir, exist_ok=True)
+        return os.path.join(checkpoint_dir, f"{digest}.json")
+
+    def _load_ocr_checkpoint(self, checkpoint_path: str) -> Dict[int, str]:
+        if not os.path.exists(checkpoint_path):
+            return {}
+        try:
+            with open(checkpoint_path, "r", encoding="utf-8") as handle:
+                data = json.load(handle)
+            return {int(page): str(text) for page, text in data.items()}
+        except (OSError, ValueError, TypeError):
+            logger.warning("Ignoring invalid OCR checkpoint %s", checkpoint_path, exc_info=True)
+            return {}
+
+    def _save_ocr_checkpoint(self, checkpoint_path: str, results: Dict[int, str]) -> None:
+        temp_path = f"{checkpoint_path}.tmp"
+        with open(temp_path, "w", encoding="utf-8") as handle:
+            json.dump({str(page): text for page, text in results.items()}, handle, ensure_ascii=False)
+        os.replace(temp_path, checkpoint_path)
+
+    @staticmethod
+    def _is_insufficient_quota_error(exc: Exception) -> bool:
+        error_text = str(exc).lower()
+        return "insufficient_quota" in error_text or "exceeded your current quota" in error_text
     
     async def extract_text_from_image(self, image_path: str) -> str:
         """

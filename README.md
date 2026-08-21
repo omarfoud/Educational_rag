@@ -42,6 +42,7 @@ ALLOW_GEMINI_FALLBACK=false
 EMBEDDING_PROVIDER=openai
 TRANSCRIPTION_PROVIDER=openai
 OCR_PROVIDER=openai
+OPENAI_OCR_PAGE_BATCH_SIZE=10
 OPENAI_API_KEY=your_key
 OPENAI_EMBEDDING_MODEL=text-embedding-3-small
 ENABLE_AUDIO_PROCESSING=true
@@ -52,6 +53,8 @@ SAVE_CHUNKS_TO_POSTGRES=false
 ```
 
 This keeps document, image, audio, and video features available while avoiding Torch, Whisper, SentenceTransformers, MoviePy, Tesseract, and Poppler in the web service. Railway still installs `ffmpeg` so video/audio can be compressed before sending it to the transcription API. Use the full `requirements.txt` profile locally when you want fully local Whisper/Tesseract processing.
+
+Large scanned PDFs are sent to OpenAI OCR in bounded page batches. Each completed batch is checkpointed under `TEMP_PATH/ocr_checkpoints`, so retrying the same uploaded file resumes without repeating completed OCR batches. Keep `TEMP_PATH` on persistent storage if checkpoints must survive a service restart or redeploy.
 
 When switching to `EMBEDDING_PROVIDER=openai`, new vectors are stored in a separate Chroma collection named by dimension, for example `documents_1536` for `text-embedding-3-small`. Local SentenceTransformer vectors use `documents_384`, so re-ingest files after switching providers; old vectors cannot be queried with the new OpenAI embedding dimension.
 
