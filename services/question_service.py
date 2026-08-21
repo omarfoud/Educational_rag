@@ -387,11 +387,22 @@ class QuestionService:
         for file_id in file_ids:
             current_filter = dict(metadata_filter)
             current_filter["file_id"] = str(file_id)
-            all_context = await self.rag.retrieve_with_metadata(
-                query=search_query,
-                top_k=10,
-                metadata_filter=current_filter,
-            )
+            try:
+                all_context = await self.rag.retrieve_with_metadata(
+                    query=search_query,
+                    top_k=10,
+                    metadata_filter=current_filter,
+                )
+            except Exception as e:
+                # A resolved lesson may already have a transcript/chunks even when
+                # its vector embedding is missing or the vector store is unavailable.
+                # Treat retrieval failure as a miss so the text fallbacks below run.
+                logger.warning(
+                    "Vector retrieval failed for file %s; falling back to stored chunks/transcript: %s",
+                    file_id,
+                    e,
+                )
+                all_context = []
             selected = self._select_question_context(all_context, has_specific_file=True)
             context.extend(selected or self._get_database_chunk_context(file_id) or self._get_transcript_context(file_id))
         return context[:12]
