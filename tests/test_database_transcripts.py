@@ -117,6 +117,40 @@ def test_document_pipeline_does_not_hide_transcript_database_failures():
         module.settings.save_transcript_files = original_file_setting
 
 
+def test_pdf_extraction_preserves_pages_when_one_page_fails(monkeypatch):
+    import importlib
+
+    module = importlib.import_module("services.document_processing_service")
+
+    class FakePage:
+        def __init__(self, text=None, error=None):
+            self.text = text
+            self.error = error
+
+        def extract_text(self):
+            if self.error:
+                raise self.error
+            return self.text
+
+    class FakeReader:
+        pages = [
+            FakePage("page one"),
+            FakePage(error=ValueError("broken font map")),
+            FakePage("page three"),
+        ]
+
+    monkeypatch.setattr(module, "PdfReader", lambda _path: FakeReader())
+    processor = module.DocumentProcessingService.__new__(
+        module.DocumentProcessingService
+    )
+
+    assert processor._extract_pages_from_pdf("book.pdf") == [
+        "page one",
+        "",
+        "page three",
+    ]
+
+
 def test_bunny_cdn_url_signing_uses_advanced_token_auth(monkeypatch):
     import base64
     import hashlib

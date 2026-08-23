@@ -138,6 +138,20 @@ class DocumentProcessingService:
             else:
                 raise ValueError(f"Unsupported file type: {file_type}")
 
+            # Normalize invalid OCR surrogate code points once so persistence,
+            # chunking, and local embedding all receive valid UTF-8 text.
+            text = (text or "").encode("utf-8", errors="replace").decode("utf-8")
+            if segments:
+                segments = [
+                    {
+                        **segment,
+                        "text": (segment.get("text", "") or "")
+                        .encode("utf-8", errors="replace")
+                        .decode("utf-8"),
+                    }
+                    for segment in segments
+                ]
+
             # 2.5 Save full transcript (JSON & DB) for all types
             self._save_full_transcript(file_id, file_path, text, language, segments)
 
@@ -388,17 +402,26 @@ class DocumentProcessingService:
         """Extract text from PDF page by page."""
         try:
             reader = PdfReader(file_path)
-            pages = []
-            
-            for page in reader.pages:
-                text = page.extract_text() or ""
-                pages.append(text)
-            
-            return pages
-            
         except Exception as e:
-            logger.warning(f"PDF page extraction failed: {e}")
+            logger.warning("Could not open PDF for page extraction: %s", e)
             return [""]
+
+        pages = []
+        for page_number, page in enumerate(reader.pages, start=1):
+            try:
+                pages.append(page.extract_text() or "")
+            except Exception as e:
+                # Keep the page position so _process_document can send only the
+                # failed page to OCR instead of collapsing the entire PDF to one
+                # empty pseudo-page.
+                logger.warning(
+                    "PDF text extraction failed on page %s; scheduling it for OCR: %s",
+                    page_number,
+                    e,
+                )
+                pages.append("")
+
+        return pages or [""]
     
     def _extract_from_docx(self, file_path: str) -> str:
         """Extract text from DOCX."""
@@ -513,7 +536,7 @@ class DocumentProcessingService:
         """Save full transcript as JSON and to PostgreSQL."""
         import json
         import os
-        
+
         # 1. Save JSON file (for format=raw in UI) only when local file
         # persistence is enabled.
         if settings.save_transcript_files:
