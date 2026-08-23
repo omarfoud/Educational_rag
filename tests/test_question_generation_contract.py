@@ -459,8 +459,9 @@ def test_generate_questions_resolves_latest_teacher_video_when_no_file_id(monkey
     assert captured["metadata_filter"]["file_id"] == "latest-video-id"
 
 
-def test_generate_questions_rejects_unprocessed_resolved_teacher_video(monkeypatch):
+def test_generate_questions_uses_metadata_when_resolved_video_has_no_content(monkeypatch):
     service = QuestionService()
+    captured = {}
 
     monkeypatch.setattr(question_service_module.database_service, "get_lesson_video_file_id", lambda item_id: None)
     monkeypatch.setattr(
@@ -473,16 +474,67 @@ def test_generate_questions_rejects_unprocessed_resolved_teacher_video(monkeypat
     async def fake_retrieve_with_metadata(query, top_k=5, metadata_filter=None, min_score=0.0):
         return []
 
+    async def fake_generate_structured_output(prompt, context, output_schema, system_instruction=None):
+        captured["context"] = context
+        captured["system_instruction"] = system_instruction
+        return []
+
     service.rag = _FakeRag([])
     service.rag.retrieve_with_metadata = fake_retrieve_with_metadata
+    service.rag.generate_structured_output = fake_generate_structured_output
     service._load_transcript_file = lambda file_id: None
 
-    with pytest.raises(ValueError, match="not ready"):
-        asyncio.run(
-            service.generate_questions(
-                GenerateQuestionsRequest(metadata={"subject": "Physics", "uploadedById": "teacher-1"}, questionsNumber=1)
+    asyncio.run(
+        service.generate_questions(
+            GenerateQuestionsRequest(
+                metadata={
+                    "subject": "Physics",
+                    "course": "Mechanics",
+                    "module": "Forces",
+                    "title": "First lesson test",
+                    "description": "Newton's laws",
+                    "uploadedById": "teacher-1",
+                },
+                questionsNumber=1,
             )
         )
+    )
+
+    fallback_text = captured["context"][0]["text"]
+    assert captured["context"][0]["metadata"]["source"] == "general_fallback"
+    assert "Course: Mechanics" in fallback_text
+    assert "Module: Forces" in fallback_text
+    assert "Title: First lesson test" in fallback_text
+    assert "Description: Newton's laws" in fallback_text
+    assert "No embedded lesson/course content was found" in captured["system_instruction"]
+
+
+def test_generate_questions_uses_metadata_when_global_embedding_search_fails():
+    service = QuestionService()
+    captured = {}
+
+    async def failing_retrieve_with_metadata(query, top_k=5, metadata_filter=None, min_score=0.0):
+        raise RuntimeError("embedding provider unavailable")
+
+    async def fake_generate_structured_output(prompt, context, output_schema, system_instruction=None):
+        captured["context"] = context
+        return []
+
+    service.rag = _FakeRag([])
+    service.rag.retrieve_with_metadata = failing_retrieve_with_metadata
+    service.rag.generate_structured_output = fake_generate_structured_output
+
+    asyncio.run(
+        service.generate_questions(
+            GenerateQuestionsRequest(
+                metadata={"subject": "Physics", "course": "Mechanics", "description": "Motion basics"},
+                questionsNumber=1,
+            )
+        )
+    )
+
+    assert captured["context"][0]["metadata"]["source"] == "general_fallback"
+    assert "Course: Mechanics" in captured["context"][0]["text"]
 
 
 def test_generate_questions_uses_module_scope_video_ids(monkeypatch):
