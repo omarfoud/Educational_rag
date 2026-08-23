@@ -107,14 +107,17 @@ class QuestionService:
                 request.metadata.file_id = file_ids[0]
 
             context = await self._retrieve_context_for_file_ids(search_query, metadata_filter, file_ids)
-            requires_resolved_content = self._question_requires_resolved_content(request, file_ids)
-            if not context and requires_resolved_content:
-                self._raise_missing_resolved_content(file_ids)
-            if not context:
+            # When a lesson was resolved but has no embeddings/chunks/transcript,
+            # use its supplied metadata as the fallback instead of searching other
+            # unrelated embedded content or rejecting the request.
+            if not context and not file_ids:
                 context = await self._retrieve_embedded_content_context(search_query, metadata_filter)
             if not context:
                 context = self._build_general_questions_context(request)
-                logger.info("Generating general questions without embedded content")
+                logger.info(
+                    "Generating general questions from request metadata without embedded lesson content; fileIds=%s",
+                    file_ids,
+                )
 
             metadata = request.metadata
             is_arabic = self._is_arabic_from_request_language(request.language)
@@ -442,11 +445,18 @@ class QuestionService:
         if not metadata_filter and search_query.strip().lower() == "general education":
             return []
 
-        all_context = await self.rag.retrieve_with_metadata(
-            query=search_query,
-            top_k=10,
-            metadata_filter=metadata_filter or None,
-        )
+        try:
+            all_context = await self.rag.retrieve_with_metadata(
+                query=search_query,
+                top_k=10,
+                metadata_filter=metadata_filter or None,
+            )
+        except Exception as e:
+            logger.warning(
+                "Embedded content retrieval failed; falling back to request metadata: %s",
+                e,
+            )
+            return []
         context = self._select_question_context(all_context, has_specific_file=False)
         for item in context:
             item.setdefault("metadata", {})
