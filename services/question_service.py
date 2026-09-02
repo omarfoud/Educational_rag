@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import secrets
 import unicodedata
 from typing import List, Dict, Any, Optional
 
@@ -949,6 +950,7 @@ Return JSON with: question, explanation, examples[]. Use {'Arabic' if is_ar else
                 request.prompt,
             )
         language = self._language_name(is_ar)
+        variation_key = secrets.token_hex(8)
         prompt = f"""Generate {request.numberOfQuestions} MCQ quiz questions.
 Subject: {request.subject}
 Topic: {request.topic or ''}
@@ -963,9 +965,11 @@ Focus / Teacher instructions: {request.prompt or ''}
 Grade/Level: {request.grade or ''}
 Semester/Term: {request.semester or ''}
 Difficulty: {request.difficulty.value}
+Variation key for this generation: {variation_key}
 Use {language}.
 {self._language_requirements(language)}
 {self._quiz_source_rules(has_teacher_context)}
+{self._quiz_math_problem_rules()}
 {self._quiz_difficulty_rules(request.difficulty)}
 {self._quiz_variety_rules()}
 Each question must have 4 options and exactly one correct option.
@@ -1016,6 +1020,17 @@ Return JSON array only."""
             "Do not claim the quiz is based on a teacher video/transcript."
         )
 
+    def _quiz_math_problem_rules(self) -> str:
+        return (
+            "Mathematics and math-related subject rules (highest priority):\n"
+            "- First determine from the subject, course, topic, lesson, instructions, and provided context whether the material is mathematics or meaningfully math-related.\n"
+            "- If it is, make EVERY question a concrete problem/exercise that the student must solve by calculating, applying a formula or rule, manipulating an expression, proving a requested result through steps, or reasoning from given values/conditions.\n"
+            "- Give each question all values, expressions, figures described in text, or conditions needed to solve it.\n"
+            "- Do NOT ask any purely theoretical, definition, terminology, recall, or 'which statement is true' question. Do NOT ask about a formula without requiring the student to use it.\n"
+            "- This all-problems requirement applies to easy, medium, hard, and mixed quizzes and overrides any difficulty or variety rule that suggests recall, definitions, or theory.\n"
+            "- Match the requested difficulty by changing the number and complexity of solution steps, not by replacing problems with theoretical questions."
+        )
+
     def _quiz_difficulty_rules(self, difficulty: DifficultyLevel) -> str:
         if difficulty == DifficultyLevel.EASY:
             return (
@@ -1055,6 +1070,8 @@ Return JSON array only."""
     def _quiz_variety_rules(self) -> str:
         return (
             "Question variety rules:\n"
+            "- Treat the variation key as a request for a genuinely new quiz. Do not print or encode the key in the output.\n"
+            "- On every generation, vary the selected concepts, scenarios, wording, numerical values, option order, and correct-answer positions instead of returning a standard or memorized question set.\n"
             "- Inside the same quiz, every question must test a different concept or learning objective.\n"
             "- Do not repeat the same idea, formula, wording pattern, or answer pattern across questions.\n"
             "- If the content is narrow, vary the angle: definition, application, misconception, comparison, example, or scenario."

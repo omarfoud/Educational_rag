@@ -112,6 +112,54 @@ def test_generate_quiz_includes_strict_difficulty_rules():
     assert "Do not repeat the same idea" in hard_prompt
 
 
+def test_generate_quiz_requires_only_problems_for_math_related_material():
+    service = QuestionService()
+    captured = {}
+
+    async def fake_structured(prompt, schema, system_instruction="", context=None):
+        captured["prompt"] = prompt
+        return []
+
+    service._structured = fake_structured
+    service._get_quiz_context = lambda request: _async_value(
+        [{"text": "Quadratic equations and worked examples", "score": 1.0, "metadata": {}}]
+    )
+
+    asyncio.run(service.generate_quiz(GenerateQuizRequest(subject="Mathematics", difficulty="easy")))
+
+    prompt = captured["prompt"]
+    assert "make EVERY question a concrete problem/exercise" in prompt
+    assert "Do NOT ask any purely theoretical" in prompt
+    assert "applies to easy, medium, hard, and mixed quizzes" in prompt
+    assert "overrides any difficulty or variety rule" in prompt
+    assert "changing the number and complexity of solution steps" in prompt
+
+
+def test_generate_quiz_uses_a_new_variation_key_on_each_request():
+    service = QuestionService()
+    captured = []
+
+    async def fake_structured(prompt, schema, system_instruction="", context=None):
+        captured.append(prompt)
+        return []
+
+    service._structured = fake_structured
+    service._get_quiz_context = lambda request: _async_value(
+        [{"text": "Teacher context", "score": 1.0, "metadata": {}}]
+    )
+    request = GenerateQuizRequest(subject="Mathematics", difficulty="medium")
+
+    asyncio.run(service.generate_quiz(request))
+    asyncio.run(service.generate_quiz(request))
+
+    first_key = captured[0].split("Variation key for this generation: ", 1)[1].splitlines()[0]
+    second_key = captured[1].split("Variation key for this generation: ", 1)[1].splitlines()[0]
+    assert first_key != second_key
+    assert "genuinely new quiz" in captured[0]
+    assert "vary the selected concepts, scenarios, wording, numerical values" in captured[0]
+    assert "Do not print or encode the key" in captured[0]
+
+
 def test_flashcards_uses_english_for_english_subject_even_when_label_is_arabic():
     service = QuestionService()
     captured = {}
