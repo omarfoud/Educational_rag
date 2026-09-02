@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import secrets
 import unicodedata
 from typing import List, Dict, Any, Optional
@@ -38,6 +39,9 @@ logger = logging.getLogger(__name__)
 class QuestionService:
     def __init__(self):
         self.rag = rag_service
+        # Keeps a bounded, process-local history so consecutive generations for
+        # the same quiz scope do not return the same exam again.
+        self._recent_quiz_questions: Dict[str, List[str]] = {}
 
     # --------------------------- helpers ---------------------------
     def _safe_json(self, value: Any, default: Any):
@@ -951,6 +955,9 @@ Return JSON with: question, explanation, examples[]. Use {'Arabic' if is_ar else
             )
         language = self._language_name(is_ar)
         variation_key = secrets.token_hex(8)
+        quiz_history_key = self._quiz_history_key(request)
+        recent_questions = self._recent_quiz_questions.get(quiz_history_key, [])
+        previous_questions_rule = self._quiz_previous_questions_rule(recent_questions)
         prompt = f"""Generate {request.numberOfQuestions} MCQ quiz questions.
 Subject: {request.subject}
 Topic: {request.topic or ''}
@@ -972,6 +979,7 @@ Use {language}.
 {self._quiz_math_problem_rules()}
 {self._quiz_difficulty_rules(request.difficulty)}
 {self._quiz_variety_rules()}
+{previous_questions_rule}
 Each question must have 4 options and exactly one correct option.
 Return JSON array only."""
         schema = {"type":"array","items":{"question":"string","options":[{"text":"string","isCorrect":"boolean"}],"explanation":"string","type":"mcq"}}
@@ -986,7 +994,38 @@ Return JSON array only."""
                 if has_teacher_context
                 else f"You generate general educational MCQ quizzes in {language}, appropriate for the {request.grade} level, from the provided metadata and instructions. Return JSON only."
             )
-        raw = await self._structured(prompt, schema, system_instruction, context=context)
+        output: List[QuizQuestion] = []
+        excluded_questions = list(recent_questions)
+        current_prompt = prompt
+        for attempt in range(3):
+            raw = await self._structured(current_prompt, schema, system_instruction, context=context)
+            candidates = self._parse_quiz_questions(raw, request.numberOfQuestions)
+            if not candidates:
+                break
+            for candidate in candidates:
+                question_text = candidate.question.strip()
+                if not question_text or self._is_repeated_quiz_question(question_text, excluded_questions):
+                    continue
+                output.append(candidate)
+                excluded_questions.append(question_text)
+                if len(output) >= request.numberOfQuestions:
+                    break
+            if len(output) >= request.numberOfQuestions:
+                break
+            missing = request.numberOfQuestions - len(output)
+            current_prompt = (
+                f"{prompt}\n\nREPLACEMENT PASS {attempt + 1}: Generate {missing} new questions only. "
+                "The earlier candidates were duplicates. Do not reuse or paraphrase any excluded question below:\n"
+                + "\n".join(f"- {question}" for question in excluded_questions[-50:])
+            )
+
+        output = output[:request.numberOfQuestions]
+        if output:
+            updated_history = recent_questions + [question.question for question in output]
+            self._recent_quiz_questions[quiz_history_key] = updated_history[-100:]
+        return output
+
+    def _parse_quiz_questions(self, raw: Any, limit: int) -> List[QuizQuestion]:
         raw = self._safe_json(raw, [])
         if isinstance(raw, dict):
             if "questions" in raw:
@@ -1000,13 +1039,44 @@ Return JSON array only."""
                         break
                 else:
                     raw = []
-        output=[]
-        for item in raw[:request.numberOfQuestions]:
+        output = []
+        for item in raw[:limit]:
             if not isinstance(item, dict): continue
             opts=[QuizOption(text=str(o.get("text","")), isCorrect=bool(o.get("isCorrect", False))) for o in (item.get("options") or []) if isinstance(o, dict)]
             if opts and not any(o.isCorrect for o in opts): opts[0].isCorrect=True
             output.append(QuizQuestion(question=item.get("question",""), options=opts[:4], explanation=item.get("explanation",""), type="mcq"))
         return output
+
+    def _quiz_history_key(self, request: GenerateQuizRequest) -> str:
+        scope = "|".join(
+            str(value or "").strip().casefold()
+            for value in (
+                request.subject, request.topic, request.course, request.module,
+                request.chapter, request.lesson, request.fileId, request.grade,
+                request.semester, request.difficulty.value,
+            )
+        )
+        return scope
+
+    def _normalize_quiz_question(self, question: str) -> str:
+        normalized = unicodedata.normalize("NFKC", question).casefold()
+        return re.sub(r"[^\w]+", " ", normalized, flags=re.UNICODE).strip()
+
+    def _is_repeated_quiz_question(self, question: str, excluded_questions: List[str]) -> bool:
+        normalized = self._normalize_quiz_question(question)
+        return bool(normalized) and normalized in {
+            self._normalize_quiz_question(previous) for previous in excluded_questions
+        }
+
+    def _quiz_previous_questions_rule(self, previous_questions: List[str]) -> str:
+        if not previous_questions:
+            return "There are no previous questions to exclude for this quiz scope."
+        exclusions = "\n".join(f"- {question}" for question in previous_questions[-50:])
+        return (
+            "Previous-question exclusion rules (mandatory):\n"
+            "- Do not repeat or merely paraphrase any question listed below. Create different problems, values, scenarios, or learning angles.\n"
+            f"Excluded previous questions:\n{exclusions}"
+        )
 
     def _quiz_source_rules(self, has_teacher_context: bool) -> str:
         if has_teacher_context:

@@ -160,6 +160,70 @@ def test_generate_quiz_uses_a_new_variation_key_on_each_request():
     assert "Do not print or encode the key" in captured[0]
 
 
+def test_generate_quiz_replaces_questions_repeated_from_previous_exam():
+    service = QuestionService()
+    prompts = []
+    responses = iter(
+        [
+            [
+                {"question": "Solve 2x = 10", "options": [{"text": "5", "isCorrect": True}], "explanation": "x = 5"},
+                {"question": "Solve x + 3 = 8", "options": [{"text": "5", "isCorrect": True}], "explanation": "x = 5"},
+            ],
+            [
+                {"question": "Solve 2x = 10", "options": [{"text": "5", "isCorrect": True}], "explanation": "x = 5"},
+                {"question": "Solve 4x = 28", "options": [{"text": "7", "isCorrect": True}], "explanation": "x = 7"},
+            ],
+            [
+                {"question": "Solve 3x - 2 = 13", "options": [{"text": "5", "isCorrect": True}], "explanation": "x = 5"},
+            ],
+        ]
+    )
+
+    async def fake_structured(prompt, schema, system_instruction="", context=None):
+        prompts.append(prompt)
+        return next(responses)
+
+    service._structured = fake_structured
+    service._get_quiz_context = lambda request: _async_value([{"text": "equations", "score": 1.0, "metadata": {}}])
+    request = GenerateQuizRequest(subject="Mathematics", chapter="Equations", numberOfQuestions=2)
+
+    first = asyncio.run(service.generate_quiz(request))
+    second = asyncio.run(service.generate_quiz(request))
+
+    assert [question.question for question in first] == ["Solve 2x = 10", "Solve x + 3 = 8"]
+    assert [question.question for question in second] == ["Solve 4x = 28", "Solve 3x - 2 = 13"]
+    assert "Excluded previous questions" in prompts[1]
+    assert "Solve 2x = 10" in prompts[1]
+    assert "REPLACEMENT PASS" in prompts[2]
+
+
+def test_generate_quiz_removes_duplicates_inside_the_same_exam():
+    service = QuestionService()
+    responses = iter(
+        [
+            [
+                {"question": "Solve x + 1 = 4", "options": [{"text": "3", "isCorrect": True}], "explanation": "x = 3"},
+                {"question": "Solve x + 1 = 4", "options": [{"text": "3", "isCorrect": True}], "explanation": "x = 3"},
+            ],
+            [
+                {"question": "Solve 2x + 1 = 9", "options": [{"text": "4", "isCorrect": True}], "explanation": "x = 4"},
+            ],
+        ]
+    )
+
+    async def fake_structured(prompt, schema, system_instruction="", context=None):
+        return next(responses)
+
+    service._structured = fake_structured
+    service._get_quiz_context = lambda request: _async_value([{"text": "equations", "score": 1.0, "metadata": {}}])
+
+    result = asyncio.run(
+        service.generate_quiz(GenerateQuizRequest(subject="Mathematics", chapter="Equations", numberOfQuestions=2))
+    )
+
+    assert [question.question for question in result] == ["Solve x + 1 = 4", "Solve 2x + 1 = 9"]
+
+
 def test_flashcards_uses_english_for_english_subject_even_when_label_is_arabic():
     service = QuestionService()
     captured = {}
