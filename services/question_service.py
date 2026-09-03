@@ -595,16 +595,22 @@ class QuestionService:
         return self._should_generate_arabic_from_material(*material_values)
 
     def _is_math_related_material(self, context: List[Dict[str, Any]], *values: Optional[str]) -> bool:
+        subject = self._normalize_language_label(values[0] if values else None)
+        # Physics may contain calculations, but it also legitimately contains
+        # theoretical questions, so it must not inherit the all-problems rule.
+        if any(marker in subject for marker in ("physics", "فيزياء", "الفيزياء")):
+            return False
+
         text_parts = [str(value or "") for value in values]
         text_parts.extend(str(item.get("text") or "") for item in (context or [])[:5])
         normalized = self._normalize_language_label(" ".join(text_parts))
         markers = (
             "math", "mathematics", "algebra", "geometry", "calculus", "trigonometry",
-            "statistics", "probability", "arithmetic", "equation", "formula", "physics",
-            "mechanics", "kinematics", "dynamics", "electricity", "engineering", "accounting",
+            "statistics", "probability", "arithmetic", "equation", "pure mathematics",
+            "applied mathematics", "mechanics", "statics", "dynamics",
             "رياضيات", "الرياضيات", "جبر", "هندسه", "تفاضل", "تكامل", "مثلثات",
-            "احصاء", "احتمالات", "معادله", "معادلات", "فيزياء", "الفيزياء",
-            "ميكانيكا", "حركه", "ديناميكا", "كهرباء", "هندسي", "محاسبه",
+            "احصاء", "احتمالات", "معادله", "معادلات", "رياضيات بحته", "الرياضيات البحته",
+            "رياضيات تطبيقيه", "الرياضيات التطبيقيه", "ميكانيكا", "استاتيكا", "ديناميكا",
         )
         return any(marker in normalized for marker in markers)
 
@@ -1139,10 +1145,13 @@ Return JSON array only."""
         )
 
     def _math_problem_rules(self, is_math_related: bool) -> str:
+        if not is_math_related:
+            return (
+                "This material is not classified as a mathematics subject. "
+                "Use the mix of theoretical, conceptual, and applied questions that best fits the source content and requested difficulty."
+            )
         classification = (
-            "This material IS mathematics or math-related (including physics/mechanics/statistics/engineering), so the rules below are mandatory."
-            if is_math_related
-            else "If the material is mathematics or meaningfully math-related, apply the rules below."
+            "This material IS mathematics or one of its branches (such as algebra, geometry, pure/applied mathematics, mechanics, statics, dynamics, or statistics), so the rules below are mandatory."
         )
         return (
             "Mathematics and math-related subject rules (highest priority):\n"

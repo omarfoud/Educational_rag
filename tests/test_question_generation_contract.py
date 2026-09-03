@@ -285,7 +285,7 @@ def test_generate_questions_uses_extracted_content_language():
     assert service._resolve_generation_language(arabic_context, "Programming", "Pointers")
 
 
-def test_generate_questions_marks_physics_as_math_related_and_requires_problems():
+def test_generate_questions_allows_theory_for_physics():
     service = QuestionService()
     request = GenerateQuestionsRequest(
         metadata=QuestionMetadata(subject="Physics", module="Dynamic friction"),
@@ -299,10 +299,24 @@ def test_generate_questions_marks_physics_as_math_related_and_requires_problems(
     prompt = service._build_generation_prompt(request, is_arabic=True, is_math_related=is_math_related)
     system = service._build_system_instruction(request, is_arabic=True, is_math_related=is_math_related)
 
-    assert is_math_related
-    assert "This material IS mathematics or math-related" in prompt
-    assert "make EVERY question a concrete problem/exercise" in prompt
-    assert "Do NOT ask any purely theoretical" in system
+    assert not is_math_related
+    assert "not classified as a mathematics subject" in prompt
+    assert "theoretical, conceptual, and applied questions" in system
+    assert "make EVERY question a concrete problem/exercise" not in prompt
+
+
+def test_generate_questions_requires_problems_for_mathematics_branches():
+    service = QuestionService()
+
+    for subject, module in (
+        ("Mathematics", "Algebra"),
+        ("رياضيات بحتة", "الجبر"),
+        ("رياضيات تطبيقية", "الاستاتيكا"),
+        ("Mathematics", "Mechanics and dynamics"),
+    ):
+        assert service._is_math_related_material([], subject, module)
+
+    assert not service._is_math_related_material([], "Physics", "Mechanics")
 
 
 def test_explicit_language_overrides_arabic_labels():
