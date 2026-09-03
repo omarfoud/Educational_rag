@@ -276,11 +276,13 @@ def test_english_generation_prompt_includes_metadata_and_strict_language_rule():
     assert "Do not output Arabic text" in system
 
 
-def test_generate_questions_defaults_to_arabic_even_when_source_content_is_english():
+def test_generate_questions_uses_extracted_content_language():
     service = QuestionService()
+    english_context = [{"text": "Pointers store memory addresses.", "metadata": {"language": "en"}}]
+    arabic_context = [{"text": "المؤشرات تخزن عناوين الذاكرة.", "metadata": {"language": "ar"}}]
 
-    assert service._resolve_questions_generation_language("Programming", "Pointers")
-    assert not service._resolve_questions_generation_language(ARABIC_ENGLISH_SUBJECT, "Pointers")
+    assert not service._resolve_generation_language(english_context, "Programming", "Pointers")
+    assert service._resolve_generation_language(arabic_context, "Programming", "Pointers")
 
 
 def test_generate_questions_marks_physics_as_math_related_and_requires_problems():

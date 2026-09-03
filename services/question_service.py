@@ -127,7 +127,8 @@ class QuestionService:
             metadata = request.metadata
             is_arabic = self._is_arabic_from_request_language(request.language)
             if is_arabic is None:
-                is_arabic = self._resolve_questions_generation_language(
+                is_arabic = self._resolve_generation_language(
+                    context,
                     metadata.subject if metadata else None,
                     metadata.course if metadata else None,
                     metadata.module if metadata else None,
@@ -592,15 +593,6 @@ class QuestionService:
         if context_language is not None:
             return context_language
         return self._should_generate_arabic_from_material(*material_values)
-
-    def _resolve_questions_generation_language(self, *material_values: Optional[str]) -> bool:
-        """Use Arabic by default for the Arabic LMS, independently of source language."""
-        overrides = [self._subject_language_override(value) for value in material_values if value]
-        if False in overrides:
-            return False
-        if True in overrides:
-            return True
-        return True
 
     def _is_math_related_material(self, context: List[Dict[str, Any]], *values: Optional[str]) -> bool:
         text_parts = [str(value or "") for value in values]
