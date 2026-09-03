@@ -127,8 +127,7 @@ class QuestionService:
             metadata = request.metadata
             is_arabic = self._is_arabic_from_request_language(request.language)
             if is_arabic is None:
-                is_arabic = self._resolve_generation_language(
-                    context,
+                is_arabic = self._resolve_questions_generation_language(
                     metadata.subject if metadata else None,
                     metadata.course if metadata else None,
                     metadata.module if metadata else None,
@@ -137,12 +136,22 @@ class QuestionService:
                     request.prompt,
                     search_query,
                 )
+            is_math_related = self._is_math_related_material(
+                context,
+                metadata.subject if metadata else None,
+                metadata.course if metadata else None,
+                metadata.module if metadata else None,
+                metadata.title if metadata else None,
+                metadata.description if metadata else None,
+                request.prompt,
+            )
             system_instruction = self._build_system_instruction(
                 request,
                 is_arabic,
                 has_teacher_context=self._has_teacher_context(context),
+                is_math_related=is_math_related,
             )
-            generation_prompt = self._build_generation_prompt(request, is_arabic)
+            generation_prompt = self._build_generation_prompt(request, is_arabic, is_math_related=is_math_related)
 
             raw_questions = await self.rag.generate_structured_output(
                 prompt=generation_prompt,
@@ -584,6 +593,29 @@ class QuestionService:
             return context_language
         return self._should_generate_arabic_from_material(*material_values)
 
+    def _resolve_questions_generation_language(self, *material_values: Optional[str]) -> bool:
+        """Use Arabic by default for the Arabic LMS, independently of source language."""
+        overrides = [self._subject_language_override(value) for value in material_values if value]
+        if False in overrides:
+            return False
+        if True in overrides:
+            return True
+        return True
+
+    def _is_math_related_material(self, context: List[Dict[str, Any]], *values: Optional[str]) -> bool:
+        text_parts = [str(value or "") for value in values]
+        text_parts.extend(str(item.get("text") or "") for item in (context or [])[:5])
+        normalized = self._normalize_language_label(" ".join(text_parts))
+        markers = (
+            "math", "mathematics", "algebra", "geometry", "calculus", "trigonometry",
+            "statistics", "probability", "arithmetic", "equation", "formula", "physics",
+            "mechanics", "kinematics", "dynamics", "electricity", "engineering", "accounting",
+            "رياضيات", "الرياضيات", "جبر", "هندسه", "تفاضل", "تكامل", "مثلثات",
+            "احصاء", "احتمالات", "معادله", "معادلات", "فيزياء", "الفيزياء",
+            "ميكانيكا", "حركه", "ديناميكا", "كهرباء", "هندسي", "محاسبه",
+        )
+        return any(marker in normalized for marker in markers)
+
     def _language_requirements(self, language: str) -> str:
         if language == "English":
             return (
@@ -644,7 +676,13 @@ class QuestionService:
             "metadata": {"source": "general_fallback"},
         }]
 
-    def _build_system_instruction(self, request: GenerateQuestionsRequest, is_arabic: bool, has_teacher_context: bool = True) -> str:
+    def _build_system_instruction(
+        self,
+        request: GenerateQuestionsRequest,
+        is_arabic: bool,
+        has_teacher_context: bool = True,
+        is_math_related: bool = False,
+    ) -> str:
         lang = self._language_name(is_arabic)
         grade = request.metadata.grade if request.metadata else "General"
         subject = request.metadata.subject if request.metadata else "General"
@@ -663,6 +701,7 @@ Requirements:
 - Generate in {lang}.
 - {self._language_requirements(lang)}
 {source_rule}
+{self._math_problem_rules(is_math_related)}
 - For MCQ: provide 4 options with exactly one correct answer.
 - For True/False: correctAnswer must be "true" or "false".
 - For Short Answer: correctAnswer should be a concise model answer.
@@ -672,7 +711,12 @@ Requirements:
 - Subject: {subject}. Module: {module}.
 Return JSON only."""
 
-    def _build_generation_prompt(self, request: GenerateQuestionsRequest, is_arabic: bool) -> str:
+    def _build_generation_prompt(
+        self,
+        request: GenerateQuestionsRequest,
+        is_arabic: bool,
+        is_math_related: bool = False,
+    ) -> str:
         if is_arabic:
             prompt = f"أنشئ {request.questionsNumber} سؤال/أسئلة تعليمية."
             prompt += f"\nنوع الأسئلة: {request.type.value}. مستوى الصعوبة: {request.difficulty.value}."
@@ -692,7 +736,7 @@ Return JSON only."""
                     f"\nTitle: {request.metadata.title}"
                     f"\nDescription: {request.metadata.description}"
                 )
-        return prompt
+        return f"{prompt}\n{self._math_problem_rules(is_math_related)}"
 
     def _get_output_schema(self, question_type: QuestionType) -> dict:
         return {
@@ -954,6 +998,18 @@ Return JSON with: question, explanation, examples[]. Use {'Arabic' if is_ar else
                 request.prompt,
             )
         language = self._language_name(is_ar)
+        is_math_related = self._is_math_related_material(
+            context,
+            request.subject,
+            request.topic,
+            request.course,
+            request.module,
+            request.chapter,
+            request.lesson,
+            request.title,
+            request.description,
+            request.prompt,
+        )
         variation_key = secrets.token_hex(8)
         quiz_history_key = self._quiz_history_key(request)
         recent_questions = self._recent_quiz_questions.get(quiz_history_key, [])
@@ -976,7 +1032,7 @@ Variation key for this generation: {variation_key}
 Use {language}.
 {self._language_requirements(language)}
 {self._quiz_source_rules(has_teacher_context)}
-{self._quiz_math_problem_rules()}
+{self._math_problem_rules(is_math_related)}
 {self._quiz_difficulty_rules(request.difficulty)}
 {self._quiz_variety_rules()}
 {previous_questions_rule}
@@ -1090,10 +1146,15 @@ Return JSON array only."""
             "Do not claim the quiz is based on a teacher video/transcript."
         )
 
-    def _quiz_math_problem_rules(self) -> str:
+    def _math_problem_rules(self, is_math_related: bool) -> str:
+        classification = (
+            "This material IS mathematics or math-related (including physics/mechanics/statistics/engineering), so the rules below are mandatory."
+            if is_math_related
+            else "If the material is mathematics or meaningfully math-related, apply the rules below."
+        )
         return (
             "Mathematics and math-related subject rules (highest priority):\n"
-            "- First determine from the subject, course, topic, lesson, instructions, and provided context whether the material is mathematics or meaningfully math-related.\n"
+            f"- {classification}\n"
             "- If it is, make EVERY question a concrete problem/exercise that the student must solve by calculating, applying a formula or rule, manipulating an expression, proving a requested result through steps, or reasoning from given values/conditions.\n"
             "- Give each question all values, expressions, figures described in text, or conditions needed to solve it.\n"
             "- Do NOT ask any purely theoretical, definition, terminology, recall, or 'which statement is true' question. Do NOT ask about a formula without requiring the student to use it.\n"

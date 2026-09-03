@@ -276,6 +276,33 @@ def test_english_generation_prompt_includes_metadata_and_strict_language_rule():
     assert "Do not output Arabic text" in system
 
 
+def test_generate_questions_defaults_to_arabic_even_when_source_content_is_english():
+    service = QuestionService()
+
+    assert service._resolve_questions_generation_language("Programming", "Pointers")
+    assert not service._resolve_questions_generation_language(ARABIC_ENGLISH_SUBJECT, "Pointers")
+
+
+def test_generate_questions_marks_physics_as_math_related_and_requires_problems():
+    service = QuestionService()
+    request = GenerateQuestionsRequest(
+        metadata=QuestionMetadata(subject="Physics", module="Dynamic friction"),
+        questionsNumber=5,
+    )
+    is_math_related = service._is_math_related_material(
+        [{"text": "Friction force and acceleration", "metadata": {}}],
+        request.metadata.subject,
+        request.metadata.module,
+    )
+    prompt = service._build_generation_prompt(request, is_arabic=True, is_math_related=is_math_related)
+    system = service._build_system_instruction(request, is_arabic=True, is_math_related=is_math_related)
+
+    assert is_math_related
+    assert "This material IS mathematics or math-related" in prompt
+    assert "make EVERY question a concrete problem/exercise" in prompt
+    assert "Do NOT ask any purely theoretical" in system
+
+
 def test_explicit_language_overrides_arabic_labels():
     service = QuestionService()
 
