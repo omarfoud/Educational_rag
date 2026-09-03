@@ -10,6 +10,15 @@ from services.question_service import QuestionService
 question_service_module = importlib.import_module("services.question_service")
 
 
+@pytest.fixture(autouse=True)
+def isolate_generation_contract_from_paid_quality_review(monkeypatch):
+    # This suite tests generation/retrieval contracts. The mandatory quality gate
+    # has independent integration and regression coverage in test_question_quality.py.
+    async def passthrough(self, questions, *args, **kwargs):
+        return questions
+    monkeypatch.setattr(QuestionService, "_verify_question_set", passthrough)
+
+
 ARABIC_GRAMMAR = "\u0627\u0644\u0642\u0648\u0627\u0639\u062f \u0627\u0644\u0646\u062d\u0648\u064a\u0629"
 ARABIC_NAHW = "\u0627\u0644\u0646\u062d\u0648"
 ARABIC_TOPIC = "\u0627\u0644\u0645\u0628\u062a\u062f\u0623 \u0648\u0627\u0644\u062e\u0628\u0631"

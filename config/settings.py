@@ -52,6 +52,8 @@ class Settings(BaseSettings):
     openai_model: str = 'gpt-5.4-nano'
     openai_temperature: float = 0.3
     openai_max_tokens: int = 8192
+    question_review_model: str = 'gpt-5.4-mini'
+    question_review_timeout_seconds: int = 180
 
     # Embeddings / Dhakira
     embedding_provider: str = 'sentence_transformer'  # openai | dhakira | sentence_transformer

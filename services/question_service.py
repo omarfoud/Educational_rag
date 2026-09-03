@@ -30,6 +30,7 @@ from services.rag_service import rag_service
 from services.embedding_service import embedding_service
 from services.conversation_service import conversation_service
 from services.database_service import database_service
+from services.question_quality_service import question_quality_service
 from utils.language_detector import language_detector
 from config.settings import settings
 
@@ -164,10 +165,43 @@ class QuestionService:
                 system_instruction=system_instruction,
             )
             questions = self._parse_questions(raw_questions, request)
+            async def regenerate(count, feedback, accepted):
+                replacement_request = request.model_copy(update={"questionsNumber": count})
+                replacement_prompt = self._build_generation_prompt(replacement_request, is_arabic, is_math_related)
+                replacement_prompt += self._quality_repair_instructions(feedback, accepted)
+                raw = await self.rag.generate_structured_output(
+                    prompt=replacement_prompt, context=context,
+                    output_schema=self._get_output_schema(request.type), system_instruction=system_instruction,
+                )
+                return self._parse_questions(raw, replacement_request)
+
+            questions = await self._verify_question_set(
+                questions, request.questionsNumber, regenerate, context,
+                self._language_name(is_arabic), is_math_related,
+            )
+            for index, question in enumerate(questions, 1):
+                question.order = index
+                # Generated IDs are not database IDs; make them unique after replacements.
+                question.id = f"q{index}"
             return questions
         except Exception as e:
             logger.error(f"Question generation failed: {e}")
             raise
+
+    async def _verify_question_set(self, questions, count, regenerate, context, language, math_required, excluded=()):
+        return await question_quality_service.ensure(
+            questions, count, regenerate, context, language, math_required, excluded,
+        )
+
+    def _quality_repair_instructions(self, feedback, accepted):
+        return (
+            "\nQUALITY REPAIR: Produce only the requested replacement questions. "
+            "Correct structural defects, supply four distinct meaningful MCQ options with exactly one correct answer, "
+            "and solve every question before marking its answer. Do not ignore contradictory premises. "
+            "Replace inconsistent questions with new fully specified exercises. "
+            "Do not repeat accepted questions. All replacements will be independently reviewed.\n"
+            + json.dumps({"rejected": feedback, "already_accepted": accepted}, ensure_ascii=False)
+        )
 
     def _merge_top_level_question_scope(self, request: GenerateQuestionsRequest) -> None:
         metadata = request.metadata
@@ -1080,6 +1114,18 @@ Return JSON array only."""
             )
 
         output = output[:request.numberOfQuestions]
+        async def regenerate(count, feedback, accepted):
+            replacement_prompt = (
+                prompt + self._quality_repair_instructions(feedback, accepted)
+                + f"\nFor this replacement call return exactly {count} questions, not the original count."
+            )
+            raw = await self._structured(replacement_prompt, schema, system_instruction, context=context)
+            return self._parse_quiz_questions(raw, count)
+
+        output = await self._verify_question_set(
+            output, request.numberOfQuestions, regenerate, context, language, is_math_related,
+            excluded=recent_questions,
+        )
         if output:
             updated_history = recent_questions + [question.question for question in output]
             self._recent_quiz_questions[quiz_history_key] = updated_history[-100:]

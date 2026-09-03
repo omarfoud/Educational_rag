@@ -69,6 +69,7 @@ from services.analytics_service import analytics_service
 from services.database_service import database_service
 from services.file_service import file_service
 from services.tts_service import tts_service
+from services.question_quality_service import QuestionQualityError
 from services.voice_agent_service import voice_agent_service
 from services.proctoring_service import proctoring_service
 from services.study_guide_service import study_guide_service
@@ -374,6 +375,8 @@ async def generate_questions(request: GenerateQuestionsRequest):
     try:
         questions = await question_service.generate_questions(request)
         return [q.model_dump() for q in questions]
+    except QuestionQualityError as e:
+        raise HTTPException(status_code=502, detail=str(e))
     except ValueError as e:
         logger.warning(f"Question generation rejected: {e}")
         raise HTTPException(status_code=404, detail=str(e))
@@ -418,6 +421,8 @@ async def ask_ai(request: AskAIRequest):
 async def generate_quiz(request: GenerateQuizRequest):
     try:
         return await question_service.generate_quiz(request)
+    except QuestionQualityError as e:
+        raise HTTPException(status_code=502, detail=str(e))
     except ValueError as e:
         logger.warning(f"Quiz generation rejected: {e}")
         raise HTTPException(status_code=404, detail=str(e))

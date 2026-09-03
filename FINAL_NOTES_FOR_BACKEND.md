@@ -50,6 +50,26 @@ For best automatic metadata extraction, name uploaded curriculum files like:
 - `GET /api/suggest-topics/{file_id}`
 - `GET /api/get-chunks/{file_id}`
 
+## Question quality review
+
+Both question-generation endpoints now review results before returning them. Generation still uses
+`OPENAI_MODEL`; independent review uses `QUESTION_REVIEW_MODEL` (default `gpt-5.4-mini`) with the existing
+OpenAI key. Review has no permissive fallback: an unavailable reviewer never means automatic approval.
+
+- Stems are solved in batches without the generator's answers, explanations, or options.
+- Options are then compared with independent solutions, including mathematical equivalence.
+- Bounded exact arithmetic checks support scalar calculations (not a general symbolic proof engine).
+- Invalid premises, missing/duplicate correct options, and placeholders require replacements.
+- Only rejected/missing questions are regenerated, and replacements undergo the same checks.
+- At most three review passes run; the review/repair phase has a default 180-second deadline,
+  configurable with `QUESTION_REVIEW_TIMEOUT_SECONDS`.
+- Failure returns HTTP 502 with `detail`, not a partial/unreviewed quiz. The LMS should display a
+  retry message and must not save a failed response as an exam. Successful response schemas are unchanged.
+
+The LMS request fields `subjectId`/`chapterId` must still be resolved by the LMS to the AI service's
+subject/chapter and content scope. Existing saved quizzes are not retroactively repaired.
+Review adds model usage and latency and reduces errors; it is not a guarantee of mathematical correctness.
+
 ## Dhakira
 
 Clone Dhakira in the project root when needed:
