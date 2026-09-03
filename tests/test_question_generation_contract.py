@@ -767,6 +767,35 @@ def test_context_language_overrides_english_focus_for_arabic_video():
     assert service._resolve_generation_language(context, "Focus on lesson one")
 
 
+def test_generate_questions_teacher_content_language_overrides_conflicting_request_language():
+    service = QuestionService()
+    captured = {}
+    context = [{"text": "الدرس يشرح قوة الاحتكاك والحركة.", "score": 1.0, "metadata": {"language": "ar"}}]
+
+    service._retrieve_context_for_file_ids = lambda query, metadata_filter, file_ids: _async_value(context)
+    service._retrieve_embedded_content_context = lambda query, metadata_filter: _async_value([])
+
+    async def fake_generate_structured_output(prompt, context, output_schema, system_instruction=None):
+        captured["prompt"] = prompt
+        captured["system_instruction"] = system_instruction
+        return []
+
+    service.rag = type("FakeRag", (), {"generate_structured_output": staticmethod(fake_generate_structured_output)})()
+
+    asyncio.run(
+        service.generate_questions(
+            GenerateQuestionsRequest(
+                metadata={"subject": "Physics", "module": "Friction"},
+                questionsNumber=1,
+                language="en",
+            )
+        )
+    )
+
+    assert "باللغة العربية فقط" in captured["system_instruction"]
+    assert "أنشئ 1 سؤال" in captured["prompt"]
+
+
 def test_quiz_context_requires_retrieved_teacher_content():
     service = QuestionService()
     service.rag = _FakeRag([])

@@ -41,12 +41,18 @@ class DirectOpenAILLM:
                     logger.info("OpenAI rate limited, retrying in %ss (attempt %s)", wait, attempt + 1)
                     await asyncio.sleep(wait)
 
-                response = await self.client.chat.completions.create(
-                    model=self.model,
-                    messages=messages,
-                    temperature=self.temperature,
-                    max_tokens=self.max_tokens,
-                )
+                request_args = {
+                    "model": self.model,
+                    "messages": messages,
+                }
+                if self.model.startswith("gpt-5"):
+                    # Current GPT-5-family chat models use max_completion_tokens
+                    # and may reject non-default temperature values.
+                    request_args["max_completion_tokens"] = self.max_tokens
+                else:
+                    request_args["temperature"] = self.temperature
+                    request_args["max_tokens"] = self.max_tokens
+                response = await self.client.chat.completions.create(**request_args)
                 return response.choices[0].message.content or ""
             except Exception as e:
                 error_text = str(e).lower()

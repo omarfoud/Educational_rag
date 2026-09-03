@@ -125,18 +125,21 @@ class QuestionService:
                 )
 
             metadata = request.metadata
-            is_arabic = self._is_arabic_from_request_language(request.language)
+            context_language = self._context_language_override(context) if self._has_teacher_context(context) else None
+            is_arabic = context_language
             if is_arabic is None:
-                is_arabic = self._resolve_generation_language(
-                    context,
-                    metadata.subject if metadata else None,
-                    metadata.course if metadata else None,
-                    metadata.module if metadata else None,
-                    metadata.title if metadata else None,
-                    metadata.description if metadata else None,
-                    request.prompt,
-                    search_query,
-                )
+                is_arabic = self._is_arabic_from_request_language(request.language)
+                if is_arabic is None:
+                    is_arabic = self._resolve_generation_language(
+                        context,
+                        metadata.subject if metadata else None,
+                        metadata.course if metadata else None,
+                        metadata.module if metadata else None,
+                        metadata.title if metadata else None,
+                        metadata.description if metadata else None,
+                        request.prompt,
+                        search_query,
+                    )
             is_math_related = self._is_math_related_material(
                 context,
                 metadata.subject if metadata else None,
@@ -982,19 +985,22 @@ Return JSON with: question, explanation, examples[]. Use {'Arabic' if is_ar else
             has_teacher_context = False
             logger.info("Generating general quiz without embedded content")
 
-        is_ar = self._is_arabic_from_request_language(request.language)
+        context_language = self._context_language_override(context) if has_teacher_context else None
+        is_ar = context_language
         if is_ar is None:
-            is_ar = self._resolve_generation_language(
-                context,
-                request.subject,
-                request.course,
-                request.module,
-                request.chapter,
-                request.lesson,
-                request.title,
-                request.description,
-                request.prompt,
-            )
+            is_ar = self._is_arabic_from_request_language(request.language)
+            if is_ar is None:
+                is_ar = self._resolve_generation_language(
+                    context,
+                    request.subject,
+                    request.course,
+                    request.module,
+                    request.chapter,
+                    request.lesson,
+                    request.title,
+                    request.description,
+                    request.prompt,
+                )
         language = self._language_name(is_ar)
         is_math_related = self._is_math_related_material(
             context,

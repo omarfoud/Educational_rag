@@ -49,7 +49,7 @@ class Settings(BaseSettings):
     gemini_max_tokens: int = 8192
 
     openai_api_key: str = ''
-    openai_model: str = 'gpt-4.1-nano'
+    openai_model: str = 'gpt-5.4-nano'
     openai_temperature: float = 0.3
     openai_max_tokens: int = 8192
 
