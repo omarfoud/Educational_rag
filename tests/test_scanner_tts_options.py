@@ -41,6 +41,22 @@ def test_lahgtna_normalizes_raw_egyptian_text(monkeypatch):
     assert text == "كتاب رقم12"
 
 
+def test_english_inflection_markers_are_spoken_as_past_tense():
+    spec = importlib.util.spec_from_file_location(
+        "isolated_vocabulary_inflections", Path(__file__).parents[1] / "services" / "vocabulary_scan_service.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    try:
+        spec.loader.exec_module(module)
+        assert module.spoken_source_text("address (ed) (v)", "en") == "address, addressed"
+        assert module.spoken_source_text("provide(d)(v)", "en") == "provide, provided"
+        assert module.spoken_source_text("occupy (ied) (v)", "en") == "occupy, occupied"
+        assert module.spoken_source_text("address (ed) (v)", "ar") == "address (ed) (v)"
+    finally:
+        sys.modules.pop(spec.name, None)
+
+
 @pytest.mark.asyncio
 async def test_vocabulary_audio_sends_one_connected_openai_request(monkeypatch, tmp_path):
     spec = importlib.util.spec_from_file_location(
@@ -69,12 +85,12 @@ async def test_vocabulary_audio_sends_one_connected_openai_request(monkeypatch, 
     monkeypatch.setitem(sys.modules, "pydub", SimpleNamespace(AudioSegment=SimpleNamespace(from_file=lambda _: FakeAudio())))
     filename, duration = await service.render_audio(
         [
-            {"source_text": "address", "translation_text": "يوجه رسالة"},
-            {"source_text": "adopt", "translation_text": "يتبنى"},
+            {"source_text": "address (ed) (v)", "translation_text": "يوجه رسالة"},
+            {"source_text": "adopt(ed)(v)", "translation_text": "يتبنى"},
         ], "en"
     )
 
-    assert captured["text"] == "address يوجه رسالة. adopt يتبنى."
+    assert captured["text"] == "address, addressed يوجه رسالة. adopt, adopted يتبنى."
     assert captured["provider"] == "openai"
     assert captured["speed"] == module.settings.openai_tts_speed
     assert filename.endswith(".mp3")

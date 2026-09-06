@@ -4,6 +4,7 @@ import base64
 import copy
 import json
 import logging
+import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -66,6 +67,37 @@ class ScanError(Exception):
 
 def identifier(prefix):
     return prefix + "_" + uuid.uuid4().hex
+
+
+_ENGLISH_PAST_TENSE_MARKER = re.compile(r"\(\s*(ied|ed|d)\s*\)", re.IGNORECASE)
+_PARENTHETICAL_NOTE = re.compile(r"\s*\([^)]*\)")
+
+
+def spoken_source_text(source_text, language):
+    """Make textbook English inflection markers useful and natural in audio.
+
+    Books commonly write a verb as ``occupy(ied)(v)`` or ``address(ed)(v)``.
+    The visible source text is intentionally left untouched for review, while the
+    recording says both the base form and the corresponding past-tense form.
+    """
+    source = (source_text or "").strip()
+    if language != "en":
+        return source
+
+    marker = _ENGLISH_PAST_TENSE_MARKER.search(source)
+    if not marker:
+        return source
+
+    base = _PARENTHETICAL_NOTE.sub("", source).strip()
+    if not base:
+        return source
+
+    ending = marker.group(1).lower()
+    if ending == "ied" and base.lower().endswith("y"):
+        past_tense = base[:-1] + "ied"
+    else:
+        past_tense = base + ending
+    return f"{base}, {past_tense}"
 
 
 class VocabularyScanService:
@@ -244,7 +276,8 @@ class VocabularyScanService:
         provider = settings.vocabulary_tts_provider if language == "ar" else "openai"
         voice = None if provider == "lahgtna" else settings.vocabulary_tts_voice
         items = [
-            " ".join((word.get("source_text", "").strip(), word.get("translation_text", "").strip())).strip()
+            " ".join((spoken_source_text(word.get("source_text", ""), language),
+                      word.get("translation_text", "").strip())).strip()
             for word in words
             if word.get("source_text", "").strip() and word.get("translation_text", "").strip()
         ]
