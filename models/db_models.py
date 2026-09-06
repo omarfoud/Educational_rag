@@ -6,6 +6,14 @@ from datetime import datetime, time, timedelta
 class Base(DeclarativeBase):
     pass
 
+
+class VocabularyScanRecord(Base):
+    """Versioned scanner state; JSON works with SQLite and PostgreSQL."""
+    __tablename__ = "VocabularyScanRecords"
+    id = Column(String(80), primary_key=True)
+    version = Column(Integer, nullable=False, default=0)
+    payload = Column(JSON, nullable=False)
+
 class FileTypeDecorator(TypeDecorator):
     impl = Integer
     cache_ok = True

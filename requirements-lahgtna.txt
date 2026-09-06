@@ -1,0 +1,7 @@
+# Optional local GPU runtime for Lahgtna OmniVoice Egyptian v3.
+# Install on a CUDA-capable machine after installing requirements.txt.
+huggingface_hub>=0.36.0
+omnivoice
+catt-tashkeel
+num2words
+soundfile

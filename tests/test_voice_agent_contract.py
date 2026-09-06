@@ -13,7 +13,7 @@ async def test_tts_lahgtna_falls_back_to_openai_when_not_configured(monkeypatch)
     service = TTSService()
     captured = {}
 
-    async def fake_openai(text, dialect, voice, provider_name="openai"):
+    async def fake_openai(text, dialect, voice, provider_name="openai", instructions=None):
         captured["text"] = text
         captured["dialect"] = dialect
         captured["provider_name"] = provider_name

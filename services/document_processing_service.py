@@ -256,7 +256,7 @@ class DocumentProcessingService:
                 job_id, 30, ProcessingStage.OCR, callback_url
             )
 
-            if (settings.ocr_provider or "local").lower() == "openai":
+            if (settings.ocr_provider or "local").lower() in {"openai", "gemini"}:
                 if ext == 'pdf':
                     ocr_text = await self.ocr_service.extract_text_from_pdf(file_path)
                 else:

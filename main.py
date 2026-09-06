@@ -153,6 +153,19 @@ app.add_middleware(
     allow_headers=settings.cors_headers.split(","),
 )
 
+from services.vocabulary_scan_service import VocabularyScanService
+from vocabulary_routes import create_vocabulary_router
+
+app.include_router(create_vocabulary_router(VocabularyScanService(
+    database_service.SessionLocal, settings.vocabulary_scan_path,
+)))
+
+
+@app.get("/vocabulary-demo", include_in_schema=False)
+async def vocabulary_demo():
+    """Small client-facing demo for the vocabulary scanner workflow."""
+    return FileResponse(os.path.join(_project_root, "ui", "vocabulary-demo.html"))
+
 
 @app.get("/")
 async def root():

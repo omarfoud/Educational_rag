@@ -30,6 +30,7 @@ Pillow>=10.2.0
 # Audio/Video Processing
 moviepy>=1.0.3
 pydub>=0.25.1
+audioop-lts>=0.2.1; python_version >= "3.13"
 ffmpeg-python>=0.2.0
 
 # Language Processing

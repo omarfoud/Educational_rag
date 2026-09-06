@@ -6,8 +6,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from dotenv import load_dotenv
 import os
 
-# Priority: System Environment > .env file
-load_dotenv(override=False)
+# Priority: .env file > System Environment
+load_dotenv(override=True)
 
 
 class Settings(BaseSettings):
@@ -31,6 +31,12 @@ class Settings(BaseSettings):
     upload_path: str = './data/uploads'
     temp_path: str = './data/temp'
     transcript_path: str = './data/transcripts'
+    vocabulary_scan_path: str = './data/vocabulary-scans'
+    vocabulary_scan_provider: str = 'openai'  # gemini | openai | legacy
+    vocabulary_scan_model: str = 'gpt-4.1'
+    vocabulary_gemini_model: str = 'gemini-2.5-flash'
+    vocabulary_tts_provider: str = 'openai'  # openai | lahgtna
+    vocabulary_tts_voice: str = 'cedar'
 
     # Uploads
     max_file_size: int = 500  # MB
@@ -78,15 +84,26 @@ class Settings(BaseSettings):
     openai_tts_model: str = 'gpt-4o-mini-tts'
     openai_tts_voice: str = 'alloy'
     openai_tts_format: str = 'mp3'
+    openai_tts_speed: float = 1.15
     lahgtna_tts_base_url: str = ''
     lahgtna_tts_api_key: str = ''
+    hf_token: str = ''
+    lahgtna_model_id: str = 'ehabnegm/lahgtna-omnivoice-egyptian-v3'
+    lahgtna_model_path: str = './data/models/lahgtna-omnivoice-egyptian-v3'
+    lahgtna_reference_audio: str = ''
+    lahgtna_reference_text: str = 'كان العمل التطوعي واللي لما تفتح الباب بس ليه الناس'
+    lahgtna_device: str = 'auto'
+    lahgtna_num_steps: int = 8
+    lahgtna_allow_download: bool = False
+    lahgtna_fallback_to_openai: bool = True
     voice_output_path: str = './data/voice'
     voice_default_dialect: str = 'egyptian'
 
     # OCR
-    ocr_provider: str = 'local'  # openai | local
+    ocr_provider: str = 'local'  # gemini | openai | local
     openai_ocr_model: str = 'gpt-4.1-mini'
     openai_ocr_page_batch_size: int = 10
+    gemini_ocr_model: str = 'gemini-2.5-flash'
     tesseract_path: str = ''
     ocr_languages: str = 'ara+eng'
 
