@@ -23,7 +23,7 @@ def test_tts_passes_instructions_only_to_supported_models(monkeypatch, tmp_path)
     service._synthesize_openai_sync("كتاب", "cedar", str(tmp_path / "test.mp3"), "mp3", "Speak Modern Standard Arabic")
     assert calls[-1]["instructions"] == "Speak Modern Standard Arabic"
     assert calls[-1]["input"] == "كتاب"
-    assert calls[-1]["speed"] == 1.0
+    assert calls[-1]["speed"] == 0.9
     monkeypatch.setattr(module.settings, "openai_tts_model", "tts-1")
     service._synthesize_openai_sync("كتاب", "alloy", str(tmp_path / "test.mp3"), "mp3", "Speak Modern Standard Arabic")
     assert "instructions" not in calls[-1]
