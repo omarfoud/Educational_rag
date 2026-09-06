@@ -23,7 +23,7 @@ def test_tts_passes_instructions_only_to_supported_models(monkeypatch, tmp_path)
     service._synthesize_openai_sync("كتاب", "cedar", str(tmp_path / "test.mp3"), "mp3", "Speak Modern Standard Arabic")
     assert calls[-1]["instructions"] == "Speak Modern Standard Arabic"
     assert calls[-1]["input"] == "كتاب"
-    assert calls[-1]["speed"] == 1.15
+    assert calls[-1]["speed"] == 1.0
     monkeypatch.setattr(module.settings, "openai_tts_model", "tts-1")
     service._synthesize_openai_sync("كتاب", "alloy", str(tmp_path / "test.mp3"), "mp3", "Speak Modern Standard Arabic")
     assert "instructions" not in calls[-1]
@@ -52,6 +52,8 @@ def test_english_inflection_markers_are_spoken_as_past_tense():
         assert module.spoken_source_text("address (ed) (v)", "en") == "address, addressed"
         assert module.spoken_source_text("provide(d)(v)", "en") == "provide, provided"
         assert module.spoken_source_text("occupy (ied) (v)", "en") == "occupy, occupied"
+        assert module.spoken_source_text("maze (n)", "en") == "maze"
+        assert module.spoken_source_text("financially (adv)", "en") == "financially"
         assert module.spoken_source_text("address (ed) (v)", "ar") == "address (ed) (v)"
     finally:
         sys.modules.pop(spec.name, None)

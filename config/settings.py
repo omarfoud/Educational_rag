@@ -84,7 +84,7 @@ class Settings(BaseSettings):
     openai_tts_model: str = 'gpt-4o-mini-tts'
     openai_tts_voice: str = 'alloy'
     openai_tts_format: str = 'mp3'
-    openai_tts_speed: float = 1.15
+    openai_tts_speed: float = 1.0
     lahgtna_tts_base_url: str = ''
     lahgtna_tts_api_key: str = ''
     hf_token: str = ''

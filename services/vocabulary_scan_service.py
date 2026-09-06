@@ -85,10 +85,9 @@ def spoken_source_text(source_text, language):
         return source
 
     marker = _ENGLISH_PAST_TENSE_MARKER.search(source)
-    if not marker:
-        return source
-
     base = _PARENTHETICAL_NOTE.sub("", source).strip()
+    if not marker:
+        return base or source
     if not base:
         return source
 
