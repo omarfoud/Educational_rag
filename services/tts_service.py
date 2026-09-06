@@ -54,6 +54,7 @@ class TTSService:
         provider: Optional[str] = None,
         instructions: Optional[str] = None,
         speed: Optional[float] = None,
+        audio_format: Optional[str] = None,
     ) -> TTSResult:
         clean_text = (text or "").strip()
         if not clean_text:
@@ -71,9 +72,9 @@ class TTSService:
                 logger.warning("Lahgtna is unavailable; falling back to OpenAI TTS: %s", exc)
                 provider_name = "openai"
 
-        if speed is None:
-            return await self._synthesize_openai(clean_text, dialect_value, voice, provider_name, instructions)
-        return await self._synthesize_openai(clean_text, dialect_value, voice, provider_name, instructions, speed)
+        return await self._synthesize_openai(
+            clean_text, dialect_value, voice, provider_name, instructions, speed, audio_format
+        )
 
     async def _synthesize_openai(
         self,
@@ -83,12 +84,13 @@ class TTSService:
         provider_name: str = "openai",
         instructions: Optional[str] = None,
         speed: Optional[float] = None,
+        requested_format: Optional[str] = None,
     ) -> TTSResult:
         if not settings.openai_api_key:
             raise RuntimeError("OpenAI TTS requires OPENAI_API_KEY")
 
         os.makedirs(self.output_path, exist_ok=True)
-        audio_format = (settings.openai_tts_format or "mp3").strip().lower()
+        audio_format = (requested_format or settings.openai_tts_format or "mp3").strip().lower()
         filename = f"voice-{int(time.time() * 1000)}-{uuid.uuid4().hex[:8]}.{audio_format}"
         audio_path = os.path.join(self.output_path, filename)
 

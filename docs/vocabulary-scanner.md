@@ -42,6 +42,11 @@ by its confirmed translation in the same recording. `VOCABULARY_TTS_VOICE`
 defaults to cedar. GPT-4o mini TTS receives explicit pronunciation instructions,
 and legacy tts-1 models do not support those instructions.
 
+For OpenAI vocabulary audio, each reviewed word-and-translation pair is rendered
+separately and joined with one second of exact silence. Configure this interval
+with `VOCABULARY_TTS_ITEM_PAUSE_SECONDS` (0 through 10, default 1.0). The
+result is served as WAV so the pause samples remain exact.
+
 For Egyptian Arabic, set `VOCABULARY_TTS_PROVIDER=lahgtna` after installing
 `requirements-lahgtna.txt`, configuring `HF_TOKEN` with a read token, and
 using a CUDA-capable host. The private 2.46 GB model will not download unless

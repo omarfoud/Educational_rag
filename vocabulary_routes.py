@@ -1,6 +1,7 @@
 """Vocabulary Scanner REST contract. Mounted at /api by main.py."""
 import io
 import logging
+import mimetypes
 import time
 
 from fastapi import APIRouter, BackgroundTasks, File, Form, Request, UploadFile
@@ -182,6 +183,7 @@ def create_vocabulary_router(service):
         track, _ = service.load(audio_id)
         if not audio_id.startswith("audio_") or track["status"] != "ready" or not (service.storage / track["filename"]).is_file():
             raise ScanError(404, "audio_track_not_found", "Audio is not available.")
-        return FileResponse(service.storage / track["filename"], media_type="audio/mpeg")
+        media_type = mimetypes.guess_type(track["filename"])[0] or "application/octet-stream"
+        return FileResponse(service.storage / track["filename"], media_type=media_type)
 
     return router

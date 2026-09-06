@@ -1,5 +1,6 @@
 import importlib.util
 import sys
+import wave
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -60,7 +61,7 @@ def test_english_inflection_markers_are_spoken_as_past_tense():
 
 
 @pytest.mark.asyncio
-async def test_vocabulary_audio_sends_one_connected_openai_request(monkeypatch, tmp_path):
+async def test_vocabulary_audio_inserts_one_second_between_openai_items(monkeypatch, tmp_path):
     spec = importlib.util.spec_from_file_location(
         "isolated_vocabulary_audio_service", Path(__file__).parents[1] / "services" / "vocabulary_scan_service.py"
     )
@@ -71,20 +72,15 @@ async def test_vocabulary_audio_sends_one_connected_openai_request(monkeypatch, 
     captured = {}
 
     async def synthesize(text, **kwargs):
-        captured["text"] = text
-        captured.update(kwargs)
-        source = tmp_path / "source.mp3"
-        source.write_bytes(b"test")
+        captured.setdefault("texts", []).append(text)
+        captured.setdefault("requests", []).append(kwargs)
+        source = tmp_path / ("source-" + str(len(captured["texts"])) + ".pcm")
+        source.write_bytes(b"\x01\x02")
         return SimpleNamespace(audio_path=str(source))
 
     tts_module = importlib.import_module("services.tts_service")
     monkeypatch.setattr(tts_module, "tts_service", SimpleNamespace(synthesize=synthesize))
 
-    class FakeAudio:
-        def __len__(self):
-            return 1000
-
-    monkeypatch.setitem(sys.modules, "pydub", SimpleNamespace(AudioSegment=SimpleNamespace(from_file=lambda _: FakeAudio())))
     filename, duration = await service.render_audio(
         [
             {"source_text": "address (ed) (v)", "translation_text": "يوجه رسالة"},
@@ -92,8 +88,12 @@ async def test_vocabulary_audio_sends_one_connected_openai_request(monkeypatch, 
         ], "en"
     )
 
-    assert captured["text"] == "address, addressed يوجه رسالة. adopt, adopted يتبنى."
-    assert captured["provider"] == "openai"
-    assert captured["speed"] == module.settings.openai_tts_speed
-    assert filename.endswith(".mp3")
-    assert duration == 0
+    assert captured["texts"] == ["address, addressed يوجه رسالة", "adopt, adopted يتبنى"]
+    assert all(request["provider"] == "openai" for request in captured["requests"])
+    assert all(request["speed"] == module.settings.openai_tts_speed for request in captured["requests"])
+    assert all(request["audio_format"] == "pcm" for request in captured["requests"])
+    assert filename.endswith(".wav")
+    assert duration == pytest.approx(1.0000833333)
+    with wave.open(str(tmp_path / filename), "rb") as audio:
+        assert audio.getframerate() == 24_000
+        assert audio.readframes(audio.getnframes()) == b"\x01\x02" + (b"\0" * 48_000) + b"\x01\x02"

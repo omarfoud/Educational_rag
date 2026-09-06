@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     vocabulary_gemini_model: str = 'gemini-2.5-flash'
     vocabulary_tts_provider: str = 'openai'  # openai | lahgtna
     vocabulary_tts_voice: str = 'cedar'
+    vocabulary_tts_item_pause_seconds: float = 1.0
 
     # Uploads
     max_file_size: int = 500  # MB

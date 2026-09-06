@@ -5,6 +5,7 @@ import copy
 import json
 import logging
 import re
+import wave
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -268,8 +269,6 @@ class VocabularyScanService:
         from services.tts_service import tts_service
         spoken_language = "Modern Standard Arabic (clear fusha, not a regional dialect)" if language == "ar" else language
         instructions = (f"Speak in {spoken_language}. You are a calm professional vocabulary teacher. "
-                        "Read the supplied items as one connected, natural passage. Use short, natural pauses at "
-                        "punctuation, preserving normal sentence rhythm. Do not restart your delivery between items. "
                         "Pronounce every word clearly at a natural pace with consistent volume and a warm neutral tone. "
                         "Read only the supplied text exactly once. Do not introduce, explain, translate, sing, or add words.")
         provider = settings.vocabulary_tts_provider if language == "ar" else "openai"
@@ -282,6 +281,12 @@ class VocabularyScanService:
         ]
         if not items:
             raise ValueError("No vocabulary text is available for audio generation")
+
+        if provider == "openai":
+            return await self._render_openai_items_with_pauses(
+                tts_service, items, language, voice, instructions
+            )
+
         spoken_text = ". ".join(items) + "."
         result = await tts_service.synthesize(spoken_text, dialect=language,
             voice=voice, provider=provider, instructions=instructions,
@@ -297,6 +302,52 @@ class VocabularyScanService:
             segment = await asyncio.to_thread(AudioSegment.from_file, source_path)
             await asyncio.to_thread(segment.export, str(target_path), format="mp3", bitrate="192k")
             return filename, len(segment) / 1000
+
+    async def _render_openai_items_with_pauses(self, tts_service, items, language, voice, instructions):
+        """Create exact silence between reviewed vocabulary pairs.
+
+        OpenAI PCM is 24 kHz, 16-bit, mono. Joining its raw samples lets the
+        scanner insert a predictable pause rather than hoping punctuation causes
+        the model to pause for a particular length.
+        """
+        sample_rate = 24_000
+        sample_width = 2
+        pause_seconds = settings.vocabulary_tts_item_pause_seconds
+        if not 0 <= pause_seconds <= 10:
+            raise ValueError("Vocabulary item pause must be between 0 and 10 seconds")
+        pause = b"\0" * round(sample_rate * sample_width * pause_seconds)
+        audio_parts = []
+        temporary_paths = []
+        try:
+            for item in items:
+                result = await tts_service.synthesize(
+                    item,
+                    dialect=language,
+                    voice=voice,
+                    provider="openai",
+                    instructions=instructions,
+                    speed=settings.openai_tts_speed,
+                    audio_format="pcm",
+                )
+                source_path = Path(result.audio_path)
+                temporary_paths.append(source_path)
+                audio_parts.append(await asyncio.to_thread(source_path.read_bytes))
+            output = self.storage / (identifier("vocabulary") + ".wav")
+            pcm = pause.join(audio_parts)
+
+            def write_wav():
+                with wave.open(str(output), "wb") as wav_file:
+                    wav_file.setnchannels(1)
+                    wav_file.setsampwidth(sample_width)
+                    wav_file.setframerate(sample_rate)
+                    wav_file.writeframes(pcm)
+
+            await asyncio.to_thread(write_wav)
+            duration = len(pcm) / (sample_rate * sample_width)
+            return output.name, duration
+        finally:
+            for path in temporary_paths:
+                path.unlink(missing_ok=True)
 
     async def run_audio(self, audio_id, words, language):
         track, version = self.load(audio_id)
