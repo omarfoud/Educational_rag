@@ -5,6 +5,7 @@ import copy
 import json
 import logging
 import re
+import unicodedata
 import wave
 import uuid
 from datetime import datetime, timezone
@@ -72,6 +73,22 @@ def identifier(prefix):
 
 _ENGLISH_PAST_TENSE_MARKER = re.compile(r"\(\s*(ied|ed|d)\s*\)", re.IGNORECASE)
 _PARENTHETICAL_NOTE = re.compile(r"\s*\([^)]*\)")
+_POS_LABEL = r"(?:adj|adv|pron|prep|conj|interj|det|n|v)\.?"
+_POS_GROUP = rf"{_POS_LABEL}(?:\s*[/,]\s*{_POS_LABEL})*"
+_BRACKETED_POS = re.compile(rf"[\(\[{{]\s*{_POS_GROUP}\s*[\)\]}}]", re.I)
+_TRAILING_POS = re.compile(rf"\s+{_POS_GROUP}\s*[\)\]}}]?\s*$", re.I)
+
+
+def spoken_vocabulary_text(text):
+    """Remove textbook labels, including common OCR bracket variations."""
+    text = unicodedata.normalize("NFKC", text or "")
+    text = re.sub(r"[\u200b-\u200f\u202a-\u202e\u2066-\u2069]", "", text)
+    text = _BRACKETED_POS.sub("", text).strip()
+    while True:
+        cleaned = _TRAILING_POS.sub("", text).strip()
+        if cleaned == text:
+            return text
+        text = cleaned
 
 
 def spoken_source_text(source_text, language):
@@ -81,8 +98,8 @@ def spoken_source_text(source_text, language):
     The visible source text is intentionally left untouched for review, while the
     recording says both the base form and the corresponding past-tense form.
     """
-    source = (source_text or "").strip()
-    if language != "en":
+    source = spoken_vocabulary_text(source_text)
+    if language.lower().split("-")[0] != "en":
         return source
 
     marker = _ENGLISH_PAST_TENSE_MARKER.search(source)
@@ -275,7 +292,7 @@ class VocabularyScanService:
         voice = None if provider == "lahgtna" else settings.vocabulary_tts_voice
         items = [
             " ".join((spoken_source_text(word.get("source_text", ""), language),
-                      word.get("translation_text", "").strip())).strip()
+                      spoken_vocabulary_text(word.get("translation_text", "")))).strip()
             for word in words
             if word.get("source_text", "").strip() and word.get("translation_text", "").strip()
         ]

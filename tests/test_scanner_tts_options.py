@@ -55,7 +55,16 @@ def test_english_inflection_markers_are_spoken_as_past_tense():
         assert module.spoken_source_text("occupy (ied) (v)", "en") == "occupy, occupied"
         assert module.spoken_source_text("maze (n)", "en") == "maze"
         assert module.spoken_source_text("financially (adv)", "en") == "financially"
-        assert module.spoken_source_text("address (ed) (v)", "ar") == "address (ed) (v)"
+        assert module.spoken_source_text("address (ed) (v)", "ar") == "address (ed)"
+        for source, expected in [
+            ("potential n", "potential"), ("productive adj.", "productive"),
+            ("hybrid [n/adj]", "hybrid"), ("current（adj）", "current"),
+            ("financially adv)", "financially"), ("current (\u200eadj)", "current"),
+            ("vitamin", "vitamin"), ("stand out", "stand out"),
+            ("address(ed) v", "address, addressed"),
+        ]:
+            assert module.spoken_source_text(source, "en") == expected
+        assert module.spoken_vocabulary_text("منتج [adj]") == "منتج"
     finally:
         sys.modules.pop(spec.name, None)
 
@@ -84,7 +93,7 @@ async def test_vocabulary_audio_inserts_one_second_between_openai_items(monkeypa
     filename, duration = await service.render_audio(
         [
             {"source_text": "address (ed) (v)", "translation_text": "يوجه رسالة"},
-            {"source_text": "adopt(ed)(v)", "translation_text": "يتبنى"},
+            {"source_text": "adopt(ed) v.", "translation_text": "يتبنى [v]"},
         ], "en"
     )
 
