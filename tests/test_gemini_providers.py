@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 from PIL import Image
 
-from config.settings import settings
+from config.settings import Settings, settings
 from services.ocr_service import OCRService
 
 
@@ -21,6 +21,10 @@ class FakeModels:
 
 def _config_value(config, snake_name, camel_name):
     return getattr(config, snake_name, getattr(config, camel_name, None))
+
+
+def test_gemini_is_the_default_vocabulary_scan_provider():
+    assert Settings.model_fields["vocabulary_scan_provider"].default == "gemini"
 
 
 def test_gemini_ocr_uses_image_high_resolution(monkeypatch, tmp_path):

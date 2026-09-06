@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     temp_path: str = './data/temp'
     transcript_path: str = './data/transcripts'
     vocabulary_scan_path: str = './data/vocabulary-scans'
-    vocabulary_scan_provider: str = 'openai'  # gemini | openai | legacy
+    vocabulary_scan_provider: str = 'gemini'  # gemini | openai | legacy
     vocabulary_scan_model: str = 'gpt-4.1'
     vocabulary_gemini_model: str = 'gemini-2.5-flash'
     vocabulary_tts_provider: str = 'openai'  # openai | lahgtna
