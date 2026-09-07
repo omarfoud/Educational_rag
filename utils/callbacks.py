@@ -78,8 +78,9 @@ class ProgressTracker:
         # Update terminal progress bar
         self._update_terminal_progress(job_id, progress, stage, message)
         
-        # Send via HTTP callback if URL provided
-        if callback_url:
+        # HTTP callbacks are terminal-only. The receiving API owns the file row,
+        # so intermediate progress must not trigger destructive state changes.
+        if callback_url and stage in {ProcessingStage.COMPLETED, ProcessingStage.ERROR}:
             try:
                 await self._send_callback_update(callback_url, update)
             except Exception as e:
@@ -134,10 +135,11 @@ class ProgressTracker:
         """
         for attempt in range(max_retries):
             try:
-                response = await self.http_client.put(
-                    callback_url,
-                    json=update.model_dump()
-                )
+                payload = {
+                    "jobId": update.jobId,
+                    "status": "Success" if update.stage == ProcessingStage.COMPLETED else "Failed",
+                }
+                response = await self.http_client.put(callback_url, json=payload)
                 response.raise_for_status()
                 logger.debug(f"Callback update sent to {callback_url}")
                 return
