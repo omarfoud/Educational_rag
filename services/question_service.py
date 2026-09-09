@@ -126,18 +126,11 @@ class QuestionService:
                 )
 
             metadata = request.metadata
-            material_language = self._explicit_material_language_override(
-                metadata.subject if metadata else None,
-                metadata.course if metadata else None,
-                metadata.module if metadata else None,
-                metadata.title if metadata else None,
-            )
-            # An English course is assessed in English even if its teacher's
-            # transcript or the surrounding UI metadata is Arabic.
-            is_arabic = material_language
-            if is_arabic is None:
-                context_language = self._context_language_override(context) if self._has_teacher_context(context) else None
-                is_arabic = context_language
+            # The generated question must use the language of the actual lesson
+            # content. UI/request metadata is only a fallback when no lesson
+            # content was retrieved.
+            context_language = self._context_language_override(context) if self._has_teacher_context(context) else None
+            is_arabic = context_language
             if is_arabic is None:
                 is_arabic = self._is_arabic_from_request_language(request.language)
                 if is_arabic is None:
@@ -611,15 +604,6 @@ class QuestionService:
         material_text = " ".join(str(value) for value in values if value)
         return language_detector.should_use_arabic(material_text)
 
-    def _explicit_material_language_override(self, *values: Optional[str]) -> Optional[bool]:
-        """Resolve named English/Arabic subjects before inspecting transcript language."""
-        overrides = [self._subject_language_override(value) for value in values if value]
-        if False in overrides:
-            return False
-        if True in overrides:
-            return True
-        return None
-
     def _context_language_override(self, context: List[Dict[str, Any]]) -> Optional[bool]:
         language_votes = []
         text_parts = []
@@ -674,12 +658,11 @@ class QuestionService:
         if language == "English":
             return (
                 "CRITICAL: Write every student-facing field in English only: question, every option, "
-                "correctAnswer, and explanation. Do not output Arabic text, even if the lesson transcript, "
-                "subject/course/module labels, or teacher instructions are written in Arabic."
+                "correctAnswer, and explanation. Do not output Arabic text."
             )
         return (
-            "اكتب كل الأسئلة والاختيارات والإجابات والشرح باللغة العربية فقط. "
-            "لا تُخرج نصا إنجليزيا إلا إذا كان مصطلحا علميا ضروريا."
+            "هام: اكتب كل الحقول التي يراها الطالب باللغة العربية فقط: نص السؤال، وكل اختيار، "
+            "والإجابة الصحيحة، والشرح. لا تُخرج نصا إنجليزيا."
         )
 
     def _has_teacher_context(self, context: List[Dict[str, Any]]) -> bool:

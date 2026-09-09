@@ -805,10 +805,10 @@ def test_generate_questions_teacher_content_language_overrides_conflicting_reque
     assert "أنشئ 1 سؤال" in captured["prompt"]
 
 
-def test_generate_questions_english_subject_overrides_arabic_transcript_and_request_language():
+def test_generate_questions_english_content_overrides_arabic_request_language():
     service = QuestionService()
     captured = {}
-    context = [{"text": "الدرس يشرح زمن الماضي البسيط.", "score": 1.0, "metadata": {"language": "ar"}}]
+    context = [{"text": "The lesson explains the past simple tense.", "score": 1.0, "metadata": {"language": "en"}}]
 
     service._retrieve_context_for_file_ids = lambda query, metadata_filter, file_ids: _async_value(context)
     service._retrieve_embedded_content_context = lambda query, metadata_filter: _async_value([])
@@ -823,7 +823,7 @@ def test_generate_questions_english_subject_overrides_arabic_transcript_and_requ
     asyncio.run(
         service.generate_questions(
             GenerateQuestionsRequest(
-                metadata={"subject": ARABIC_ENGLISH_SUBJECT, "module": "Past simple"},
+                metadata={"subject": "Physics", "module": "Past simple"},
                 questionsNumber=1,
                 language="ar",
             )
