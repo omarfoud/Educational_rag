@@ -776,6 +776,16 @@ def test_context_language_overrides_english_focus_for_arabic_video():
     assert service._resolve_generation_language(context, "Focus on lesson one")
 
 
+def test_context_text_overrides_conflicting_chunk_language_metadata():
+    service = QuestionService()
+    context = [{
+        "text": "The past simple describes completed actions in the past.",
+        "metadata": {"language": "ar"},
+    }]
+
+    assert not service._resolve_generation_language(context, "\u062f\u0631\u0633 \u0625\u0646\u062c\u0644\u064a\u0632\u064a")
+
+
 def test_generate_questions_teacher_content_language_overrides_conflicting_request_language():
     service = QuestionService()
     captured = {}

@@ -620,12 +620,15 @@ class QuestionService:
             if text:
                 text_parts.append(str(text))
 
-        if language_votes:
-            return language_votes.count(True) > language_votes.count(False)
-
+        # Chunks can have an incorrect or stale language flag (for example,
+        # an English document uploaded through an Arabic UI). The text is the
+        # source of truth for the language used in generated questions.
         context_text = " ".join(text_parts[:3])
         if context_text.strip():
             return language_detector.should_use_arabic(context_text)
+
+        if language_votes:
+            return language_votes.count(True) > language_votes.count(False)
         return None
 
     def _resolve_generation_language(self, context: List[Dict[str, Any]], *material_values: Optional[str]) -> bool:
