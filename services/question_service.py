@@ -126,11 +126,18 @@ class QuestionService:
                 )
 
             metadata = request.metadata
-            # The generated question must use the language of the actual lesson
-            # content. UI/request metadata is only a fallback when no lesson
-            # content was retrieved.
+            material_language = self._english_learning_material_language(
+                metadata.subject if metadata else None,
+                metadata.course if metadata else None,
+                metadata.module if metadata else None,
+                metadata.title if metadata else None,
+                metadata.description if metadata else None,
+            )
+            # English lessons are commonly explained in Arabic, while the
+            # assessed language must still be English. For all other subjects,
+            # use the language of the retrieved lesson content.
             context_language = self._context_language_override(context) if self._has_teacher_context(context) else None
-            is_arabic = context_language
+            is_arabic = material_language if material_language is not None else context_language
             if is_arabic is None:
                 is_arabic = self._is_arabic_from_request_language(request.language)
                 if is_arabic is None:
@@ -565,6 +572,12 @@ class QuestionService:
             "english",
             "english language",
             "language english",
+            "english grammar",
+            "past simple",
+            "present simple",
+            "present continuous",
+            "past continuous",
+            "future simple",
             "\u0644\u063a\u0647 \u0627\u0646\u062c\u0644\u064a\u0632\u064a",
             "\u0627\u0644\u0644\u063a\u0647 \u0627\u0644\u0627\u0646\u062c\u0644\u064a\u0632\u064a\u0647",
             "\u0644\u063a\u0647 \u0627\u0646\u062c\u0644\u064a\u0632\u064a\u0647",
@@ -587,6 +600,17 @@ class QuestionService:
             return False
         if normalized in arabic_markers or any(marker in normalized for marker in arabic_markers):
             return True
+        return None
+
+    def _english_learning_material_language(self, *values: Optional[str]) -> Optional[bool]:
+        """Force English output for English-language lesson labels/topics.
+
+        An Arabic teacher transcript can explain an English grammar lesson, but
+        its exercises still need English questions and answers.
+        """
+        for value in values:
+            if self._subject_language_override(value) is False:
+                return False
         return None
 
     def _should_generate_arabic_from_material(self, subject: Optional[str] = None, *values: Optional[str]) -> bool:

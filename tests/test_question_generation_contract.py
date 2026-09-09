@@ -845,6 +845,34 @@ def test_generate_questions_english_content_overrides_arabic_request_language():
     assert "Generate 1 educational questions" in captured["prompt"]
 
 
+def test_generate_questions_english_lesson_overrides_arabic_explanation_transcript():
+    service = QuestionService()
+    captured = {}
+    context = [{"text": "\u0627\u0644\u062f\u0631\u0633 \u064a\u0634\u0631\u062d \u0632\u0645\u0646 \u0627\u0644\u0645\u0627\u0636\u064a \u0627\u0644\u0628\u0633\u064a\u0637.", "metadata": {"language": "ar"}}]
+
+    service._retrieve_context_for_file_ids = lambda query, metadata_filter, file_ids: _async_value(context)
+    service._retrieve_embedded_content_context = lambda query, metadata_filter: _async_value([])
+
+    async def fake_generate_structured_output(prompt, context, output_schema, system_instruction=None):
+        captured["system_instruction"] = system_instruction
+        return []
+
+    service.rag = type("FakeRag", (), {"generate_structured_output": staticmethod(fake_generate_structured_output)})()
+
+    asyncio.run(
+        service.generate_questions(
+            GenerateQuestionsRequest(
+                metadata={"subject": ARABIC_ENGLISH_SUBJECT, "module": "Past simple"},
+                questionsNumber=1,
+                language="ar",
+            )
+        )
+    )
+
+    assert "Generate in English" in captured["system_instruction"]
+    assert "student-facing field in English only" in captured["system_instruction"]
+
+
 def test_quiz_context_requires_retrieved_teacher_content():
     service = QuestionService()
     service.rag = _FakeRag([])
