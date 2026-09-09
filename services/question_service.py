@@ -126,8 +126,18 @@ class QuestionService:
                 )
 
             metadata = request.metadata
-            context_language = self._context_language_override(context) if self._has_teacher_context(context) else None
-            is_arabic = context_language
+            material_language = self._explicit_material_language_override(
+                metadata.subject if metadata else None,
+                metadata.course if metadata else None,
+                metadata.module if metadata else None,
+                metadata.title if metadata else None,
+            )
+            # An English course is assessed in English even if its teacher's
+            # transcript or the surrounding UI metadata is Arabic.
+            is_arabic = material_language
+            if is_arabic is None:
+                context_language = self._context_language_override(context) if self._has_teacher_context(context) else None
+                is_arabic = context_language
             if is_arabic is None:
                 is_arabic = self._is_arabic_from_request_language(request.language)
                 if is_arabic is None:
@@ -601,6 +611,15 @@ class QuestionService:
         material_text = " ".join(str(value) for value in values if value)
         return language_detector.should_use_arabic(material_text)
 
+    def _explicit_material_language_override(self, *values: Optional[str]) -> Optional[bool]:
+        """Resolve named English/Arabic subjects before inspecting transcript language."""
+        overrides = [self._subject_language_override(value) for value in values if value]
+        if False in overrides:
+            return False
+        if True in overrides:
+            return True
+        return None
+
     def _context_language_override(self, context: List[Dict[str, Any]]) -> Optional[bool]:
         language_votes = []
         text_parts = []
@@ -654,8 +673,9 @@ class QuestionService:
     def _language_requirements(self, language: str) -> str:
         if language == "English":
             return (
-                "Write every question, option, answer, and explanation in English only. "
-                "Do not output Arabic text, even if subject/course/module labels are written in Arabic."
+                "CRITICAL: Write every student-facing field in English only: question, every option, "
+                "correctAnswer, and explanation. Do not output Arabic text, even if the lesson transcript, "
+                "subject/course/module labels, or teacher instructions are written in Arabic."
             )
         return (
             "اكتب كل الأسئلة والاختيارات والإجابات والشرح باللغة العربية فقط. "

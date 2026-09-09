@@ -805,6 +805,36 @@ def test_generate_questions_teacher_content_language_overrides_conflicting_reque
     assert "أنشئ 1 سؤال" in captured["prompt"]
 
 
+def test_generate_questions_english_subject_overrides_arabic_transcript_and_request_language():
+    service = QuestionService()
+    captured = {}
+    context = [{"text": "الدرس يشرح زمن الماضي البسيط.", "score": 1.0, "metadata": {"language": "ar"}}]
+
+    service._retrieve_context_for_file_ids = lambda query, metadata_filter, file_ids: _async_value(context)
+    service._retrieve_embedded_content_context = lambda query, metadata_filter: _async_value([])
+
+    async def fake_generate_structured_output(prompt, context, output_schema, system_instruction=None):
+        captured["prompt"] = prompt
+        captured["system_instruction"] = system_instruction
+        return []
+
+    service.rag = type("FakeRag", (), {"generate_structured_output": staticmethod(fake_generate_structured_output)})()
+
+    asyncio.run(
+        service.generate_questions(
+            GenerateQuestionsRequest(
+                metadata={"subject": ARABIC_ENGLISH_SUBJECT, "module": "Past simple"},
+                questionsNumber=1,
+                language="ar",
+            )
+        )
+    )
+
+    assert "Generate in English" in captured["system_instruction"]
+    assert "student-facing field in English only" in captured["system_instruction"]
+    assert "Generate 1 educational questions" in captured["prompt"]
+
+
 def test_quiz_context_requires_retrieved_teacher_content():
     service = QuestionService()
     service.rag = _FakeRag([])
